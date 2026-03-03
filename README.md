@@ -32,6 +32,21 @@ Pruner   ────────── (waits for all readers) ─────�
 
 ---
 
+## When Is This Useful?
+
+File Stash helps when your application needs to **download a file and process it locally** — not just move it between storages, but actually do something with the bytes:
+
+- **Image processing pipelines** — resize, watermark, or convert images from S3/CDN across multiple queue workers
+- **PDF/document generation** — compose reports from template files stored remotely
+- **ML/AI workers** — load model weights or input data from cloud storage, process locally
+- **Video/audio processing** — extract thumbnails, transcode, analyze media files
+- **Data import jobs** — parse CSV/Excel files from external sources in parallel workers
+- **Email attachments** — fetch, attach, and discard temporary files
+
+In all these cases, `Storage::get()` returns file contents as a string (loaded into memory). File Stash gives you a **local file path** you can pass to any tool — FFmpeg, Imagick, Python scripts, shell commands — without holding the entire file in PHP memory.
+
+---
+
 ## How It Works
 
 ```
@@ -79,75 +94,117 @@ php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProv
 
 ## Quick Start
 
-### Cache a remote file
+### Process a remote file locally
 
 ```php
 use FileStash;
 use Jackardios\FileStash\GenericFile;
 
-$file = new GenericFile('https://example.com/reports/q4.pdf');
+$file = new GenericFile('https://cdn.example.com/uploads/photo.jpg');
 
-$result = FileStash::get($file, function ($file, $cachedPath) {
-    // $cachedPath is a local path — read, copy, process, anything
-    return Storage::put('reports/q4.pdf', file_get_contents($cachedPath));
+FileStash::get($file, function ($file, $cachedPath) {
+    // $cachedPath is a real local path — pass it to any tool
+    $image = Image::read($cachedPath);
+    $image->resize(300, 200)->save(storage_path('thumbs/photo.jpg'));
 });
 ```
 
-### Cache a file from a Laravel storage disk
+### Process a file from a Laravel storage disk
 
-Any configured disk works — S3, GCS, SFTP, local:
+Any configured disk works — S3, GCS, SFTP, local. The prefix before `://` is the disk name from `config/filesystems.php`:
 
 ```php
-$file = new GenericFile('s3://bucket-exports/report.csv');
+// "photos" is the disk name from config/filesystems.php
+$file = new GenericFile('photos://uploads/2024/photo.jpg');
 
 FileStash::get($file, function ($file, $path) {
-    // Process the CSV from local cache
+    // Work with the local cached copy instead of streaming from S3
+    $hash = md5_file($path);
 });
 ```
+
+> **Note:** `photos://` refers to a Laravel disk named `photos`, not a URL protocol. Configure your disks in `config/filesystems.php`.
 
 ### Batch processing
 
-Process multiple files while holding a lifecycle lock that prevents pruning:
+Process multiple files atomically — the lifecycle lock guarantees no file is pruned while you work:
 
 ```php
-$files = [
-    new GenericFile('https://cdn.example.com/img1.jpg'),
-    new GenericFile('https://cdn.example.com/img2.jpg'),
-    new GenericFile('https://cdn.example.com/img3.jpg'),
-];
+$files = collect($urls)->map(fn ($url) => new GenericFile($url))->all();
 
 FileStash::batch($files, function ($files, $paths) {
-    // All paths are guaranteed to exist for the duration of this callback
-    // Pruner cannot delete them while you work
+    // All files are guaranteed to exist until this callback returns.
+    // Safe to do multi-file operations: ZIP, PDF merge, comparison, etc.
+    $zip = new ZipArchive();
+    $zip->open(storage_path('export.zip'), ZipArchive::CREATE);
     foreach ($paths as $i => $path) {
-        Image::make($path)->resize(300, 300)->save();
+        $zip->addFile($path, basename($files[$i]->getUrl()));
     }
+    $zip->close();
 });
 ```
 
 ### One-time files (auto-cleanup)
 
-Files are deleted after the callback completes:
+Use `getOnce()` when you only need the file temporarily — it's deleted from cache after the callback:
 
 ```php
+$file = new GenericFile('https://example.com/invoices/INV-2024-001.pdf');
+
 FileStash::getOnce($file, function ($file, $path) {
-    Mail::send([], [], fn ($m) => $m->attach($path));
+    return Mail::to($user)->send(new InvoiceMail($path));
 });
-// File is automatically removed from cache
+// Cached file is automatically removed
+```
+
+---
+
+## Custom File Implementations
+
+`GenericFile` works for simple cases. For domain models, implement the `File` interface directly on your Eloquent model:
+
+```php
+use Jackardios\FileStash\Contracts\File;
+
+class Document extends Model implements File
+{
+    public function getUrl(): string
+    {
+        // Remote URL
+        return $this->cdn_url;
+
+        // Or a Laravel disk path
+        // return "documents://{$this->path}";
+    }
+}
+```
+
+Then pass models directly:
+
+```php
+$document = Document::find(1);
+
+FileStash::get($document, function ($document, $path) {
+    // $document is your Eloquent model — access any attribute
+    $text = (new PdfParser())->parseFile($path)->getText();
+    $document->update(['extracted_text' => $text]);
+});
 ```
 
 ---
 
 ## File Sources
 
-URLs determine where files are fetched from:
+The URL prefix determines where the file is fetched from:
 
 | URL format | Source | Example |
 |---|---|---|
 | `https://...` or `http://...` | Remote HTTP via Guzzle | `https://cdn.example.com/photo.jpg` |
-| `diskname://path` | Any Laravel filesystem disk | `s3://exports/data.csv` |
+| `diskname://path` | Laravel filesystem disk | `photos://uploads/photo.jpg` |
 
-> Local paths like `/var/files/image.jpg` are not supported directly. Configure a [local disk](https://laravel.com/docs/filesystem#the-local-driver) and use `mydisk://image.jpg`.
+The `diskname` must match a key in your `config/filesystems.php` `disks` array.
+
+> Local file paths like `/var/files/image.jpg` are not supported directly. Configure a [local disk](https://laravel.com/docs/filesystem#the-local-driver) and use `mydisk://image.jpg`.
 
 ---
 
@@ -233,6 +290,51 @@ FileStash::prune(): array                     // Remove expired/oversized files
 FileStash::clear(): void                      // Delete all unused cached files
 FileStash::metrics(): CacheMetrics            // Get hit/miss/eviction counters
 ```
+
+---
+
+## Pruning
+
+Pruning removes cached files that are older than `max_age` or exceed the `max_size` limit.
+
+### Automatic pruning
+
+The service provider registers a scheduled command that runs automatically. By default, it prunes every 5 minutes:
+
+```php
+// config/file-stash.php
+'prune_interval' => '*/5 * * * *',
+```
+
+Make sure Laravel's scheduler is running:
+
+```bash
+* * * * * cd /path-to-your-project && php artisan schedule:run >> /dev/null 2>&1
+```
+
+### Manual pruning
+
+Run the artisan command:
+
+```bash
+php artisan prune-file-stash
+```
+
+Or call it programmatically:
+
+```php
+$stats = FileStash::prune();
+// ['deleted' => 12, 'remaining' => 48, 'total_size' => 524288000, 'completed' => true]
+```
+
+### Clearing all cache
+
+```php
+FileStash::clear();           // Delete all unused cached files
+FileStash::forget($file);     // Remove a specific file
+```
+
+The cache is also cleared automatically when you run `php artisan cache:clear`.
 
 ---
 
@@ -357,15 +459,6 @@ FILE_STASH_ALLOWED_HOSTS=example.com,*.cdn.example.com
 |---|---|---|---|
 | `prune_interval` | `FILE_STASH_PRUNE_INTERVAL` | `*/5 * * * *` | Cron schedule for auto-pruning |
 | `prune_timeout` | `FILE_STASH_PRUNE_TIMEOUT` | `300` | Prune timeout (seconds) |
-
-Prune manually or inspect results:
-
-```php
-$stats = FileStash::prune();
-// ['deleted' => 12, 'remaining' => 48, 'total_size' => 524288000, 'completed' => true]
-```
-
-The cache is also cleared automatically when you run `php artisan cache:clear`.
 
 ### Performance
 
