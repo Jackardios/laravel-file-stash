@@ -1,6 +1,6 @@
 <?php
 
-namespace Jackardios\FileCache\Support;
+namespace Jackardios\FileStash\Support;
 
 class CacheMetrics
 {

@@ -1,8 +1,8 @@
 <?php
 
-namespace Jackardios\FileCache\Events;
+namespace Jackardios\FileStash\Events;
 
-use Jackardios\FileCache\Contracts\File;
+use Jackardios\FileStash\Contracts\File;
 
 class CacheFileRetrieved
 {

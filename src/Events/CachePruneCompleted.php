@@ -1,6 +1,6 @@
 <?php
 
-namespace Jackardios\FileCache\Events;
+namespace Jackardios\FileStash\Events;
 
 class CachePruneCompleted
 {

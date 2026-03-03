@@ -1,24 +1,24 @@
 <?php
 
-namespace Jackardios\FileCache;
+namespace Jackardios\FileStash;
 
 use GuzzleHttp\Exception\RequestException;
-use Jackardios\FileCache\Contracts\File;
-use Jackardios\FileCache\Contracts\FileCache as FileCacheContract;
-use Jackardios\FileCache\Exceptions\FailedToRetrieveFileException;
-use Jackardios\FileCache\Exceptions\FileIsTooLargeException;
-use Jackardios\FileCache\Exceptions\FileLockedException;
-use Jackardios\FileCache\Exceptions\HostNotAllowedException;
-use Jackardios\FileCache\Exceptions\MimeTypeIsNotAllowedException;
-use Jackardios\FileCache\Exceptions\SourceResourceIsInvalidException;
-use Jackardios\FileCache\Exceptions\SourceResourceTimedOutException;
-use Jackardios\FileCache\Events\CacheFileEvicted;
-use Jackardios\FileCache\Events\CacheFileRetrieved;
-use Jackardios\FileCache\Events\CacheHit;
-use Jackardios\FileCache\Events\CacheMiss;
-use Jackardios\FileCache\Events\CachePruneCompleted;
-use Jackardios\FileCache\Support\CacheMetrics;
-use Jackardios\FileCache\Support\ConfigNormalizer;
+use Jackardios\FileStash\Contracts\File;
+use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
+use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
+use Jackardios\FileStash\Exceptions\FileIsTooLargeException;
+use Jackardios\FileStash\Exceptions\FileLockedException;
+use Jackardios\FileStash\Exceptions\HostNotAllowedException;
+use Jackardios\FileStash\Exceptions\MimeTypeIsNotAllowedException;
+use Jackardios\FileStash\Exceptions\SourceResourceIsInvalidException;
+use Jackardios\FileStash\Exceptions\SourceResourceTimedOutException;
+use Jackardios\FileStash\Events\CacheFileEvicted;
+use Jackardios\FileStash\Events\CacheFileRetrieved;
+use Jackardios\FileStash\Events\CacheHit;
+use Jackardios\FileStash\Events\CacheMiss;
+use Jackardios\FileStash\Events\CachePruneCompleted;
+use Jackardios\FileStash\Support\CacheMetrics;
+use Jackardios\FileStash\Support\ConfigNormalizer;
 use Illuminate\Contracts\Events\Dispatcher;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -40,7 +40,7 @@ use Symfony\Component\Finder\Finder;
  * @phpstan-import-type NormalizedConfig from ConfigNormalizer
  * @phpstan-type RetrievedFile array{path: string, stream: resource}
  */
-class FileCache implements FileCacheContract
+class FileStash implements FileStashContract
 {
     /**
      * @var NormalizedConfig
@@ -666,7 +666,7 @@ class FileCache implements FileCacheContract
     {
         $suffix = hash('sha256', $this->normalizePathForLock($this->config['path']));
 
-        return sys_get_temp_dir() . '/laravel-file-cache/locks/' . $suffix . '.lock';
+        return sys_get_temp_dir() . '/laravel-file-stash/locks/' . $suffix . '.lock';
     }
 
     /**

@@ -1,10 +1,10 @@
 <?php
 
-namespace Jackardios\FileCache\Tests\Listeners;
+namespace Jackardios\FileStash\Tests\Listeners;
 
-use Jackardios\FileCache\Tests\TestCase;
+use Jackardios\FileStash\Tests\TestCase;
 
-class ClearFileCacheTest extends TestCase
+class ClearFileStashTest extends TestCase
 {
     public function setUp(): void
     {
@@ -23,7 +23,7 @@ class ClearFileCacheTest extends TestCase
 
     public function testListen()
     {
-        config(['file-cache.path' => $this->cachePath]);
+        config(['file-stash.path' => $this->cachePath]);
         $this->app['files']->put($this->cachePath.'/1', 'abc');
         $this->app['events']->dispatch('cache:clearing');
         $this->assertFalse($this->app['files']->exists($this->cachePath.'/1'));

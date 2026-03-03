@@ -1,9 +1,9 @@
 <?php
 
-namespace Jackardios\FileCache;
+namespace Jackardios\FileStash;
 
 use InvalidArgumentException;
-use Jackardios\FileCache\Contracts\File;
+use Jackardios\FileStash\Contracts\File;
 
 class GenericFile implements File
 {

@@ -1,12 +1,12 @@
 <?php
 
-namespace Jackardios\FileCache\Tests;
+namespace Jackardios\FileStash\Tests;
 
-use Jackardios\FileCache\Exceptions\FailedToRetrieveFileException;
-use Jackardios\FileCache\Exceptions\SourceResourceIsInvalidException;
-use Jackardios\FileCache\Exceptions\SourceResourceTimedOutException;
-use Jackardios\FileCache\FileCache;
-use Jackardios\FileCache\GenericFile;
+use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
+use Jackardios\FileStash\Exceptions\SourceResourceIsInvalidException;
+use Jackardios\FileStash\Exceptions\SourceResourceTimedOutException;
+use Jackardios\FileStash\FileStash;
+use Jackardios\FileStash\GenericFile;
 use GuzzleHttp\Client;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
@@ -28,7 +28,7 @@ use PHPUnit\Framework\TestCase;
  * @see https://github.com/laravel/framework/issues/49593
  */
 #[RunTestsInSeparateProcesses]
-class FileCacheFunctionMockTest extends TestCase
+class FileStashFunctionMockTest extends TestCase
 {
     use PHPMock;
 
@@ -58,9 +58,9 @@ class FileCacheFunctionMockTest extends TestCase
     }
 
     /**
-     * Create a FileCache with a mock S3 filesystem.
+     * Create a FileStash with a mock S3 filesystem.
      */
-    protected function createCacheWithMockS3($stream, array $config = []): FileCache
+    protected function createCacheWithMockS3($stream, array $config = []): FileStash
     {
         $filesystemMock = $this->createMock(FilesystemAdapter::class);
         $filesystemMock->method('readStream')->willReturn($stream);
@@ -70,7 +70,7 @@ class FileCacheFunctionMockTest extends TestCase
         $filesystemManagerMock = $this->createMock(FilesystemManager::class);
         $filesystemManagerMock->method('disk')->with('s3')->willReturn($filesystemMock);
 
-        return new FileCache(
+        return new FileStash(
             array_merge(['path' => $this->cachePath], $config),
             null,
             $this->files,
@@ -79,9 +79,9 @@ class FileCacheFunctionMockTest extends TestCase
     }
 
     /**
-     * Create a FileCache with a mock fixtures disk.
+     * Create a FileStash with a mock fixtures disk.
      */
-    protected function createCacheWithMockFixtures(array $config = []): FileCache
+    protected function createCacheWithMockFixtures(array $config = []): FileStash
     {
         $fixturesPath = __DIR__.'/files';
 
@@ -102,7 +102,7 @@ class FileCacheFunctionMockTest extends TestCase
         $filesystemManagerMock = $this->createMock(FilesystemManager::class);
         $filesystemManagerMock->method('disk')->with('fixtures')->willReturn($filesystemMock);
 
-        return new FileCache(
+        return new FileStash(
             array_merge(['path' => $this->cachePath], $config),
             null,
             $this->files,
@@ -111,9 +111,9 @@ class FileCacheFunctionMockTest extends TestCase
     }
 
     /**
-     * Create a FileCache with a mock HTTP client.
+     * Create a FileStash with a mock HTTP client.
      */
-    protected function createCacheWithMockClient(array $responses, array $config = []): FileCache
+    protected function createCacheWithMockClient(array $responses, array $config = []): FileStash
     {
         $mock = new MockHandler($responses);
         $client = new Client([
@@ -123,7 +123,7 @@ class FileCacheFunctionMockTest extends TestCase
 
         $filesystemManagerMock = $this->createMock(FilesystemManager::class);
 
-        return new FileCache(
+        return new FileStash(
             array_merge(['path' => $this->cachePath], $config),
             $client,
             $this->files,
@@ -147,7 +147,7 @@ class FileCacheFunctionMockTest extends TestCase
 
         $cache = $this->createCacheWithMockFixtures(['read_timeout' => -1]);
 
-        $streamSetTimeoutMock = $this->getFunctionMock('Jackardios\\FileCache', 'stream_set_timeout');
+        $streamSetTimeoutMock = $this->getFunctionMock('Jackardios\\FileStash', 'stream_set_timeout');
         $streamSetTimeoutMock->expects($this->never());
 
         $path = $cache->get($file, $this->noop);
@@ -160,7 +160,7 @@ class FileCacheFunctionMockTest extends TestCase
         $cache = $this->createCacheWithMockFixtures(['read_timeout' => 0.5]);
         $file = new GenericFile('fixtures://test-file.txt');
 
-        $streamSetTimeoutMock = $this->getFunctionMock('Jackardios\\FileCache', 'stream_set_timeout');
+        $streamSetTimeoutMock = $this->getFunctionMock('Jackardios\\FileStash', 'stream_set_timeout');
         $streamSetTimeoutMock->expects($this->once())
             ->willReturnCallback(function ($stream, $seconds, $microseconds = 0) {
                 $this->assertIsResource($stream);
@@ -185,7 +185,7 @@ class FileCacheFunctionMockTest extends TestCase
 
         $cache = $this->createCacheWithMockS3($stream, ['read_timeout' => 0.1]);
 
-        $streamGetMetaDataMock = $this->getFunctionMock('Jackardios\\FileCache', 'stream_get_meta_data');
+        $streamGetMetaDataMock = $this->getFunctionMock('Jackardios\\FileStash', 'stream_get_meta_data');
         $streamGetMetaDataMock->expects($this->atLeastOnce())->willReturn(['timed_out' => true]);
 
         $this->expectException(SourceResourceTimedOutException::class);
@@ -212,7 +212,7 @@ class FileCacheFunctionMockTest extends TestCase
 
         $cache = $this->createCacheWithMockS3($stream);
 
-        $streamCopyMock = $this->getFunctionMock('Jackardios\\FileCache', 'stream_copy_to_stream');
+        $streamCopyMock = $this->getFunctionMock('Jackardios\\FileStash', 'stream_copy_to_stream');
         $streamCopyMock->expects($this->once())->willReturn(false);
 
         $this->expectException(SourceResourceIsInvalidException::class);
@@ -239,7 +239,7 @@ class FileCacheFunctionMockTest extends TestCase
         touch($cachedPath);
         $this->assertFileExists($cachedPath);
 
-        $fopenMock = $this->getFunctionMock('Jackardios\\FileCache', 'fopen');
+        $fopenMock = $this->getFunctionMock('Jackardios\\FileStash', 'fopen');
         $fopenMock->expects($this->atLeast(3))
             ->willReturnCallback(function ($path, $mode) use ($cachedPath) {
                 if ($path === $cachedPath) {
@@ -253,7 +253,7 @@ class FileCacheFunctionMockTest extends TestCase
                 return \fopen($path, $mode);
             });
 
-        $usleepMock = $this->getFunctionMock('Jackardios\\FileCache', 'usleep');
+        $usleepMock = $this->getFunctionMock('Jackardios\\FileStash', 'usleep');
         $usleepMock->expects($this->any());
 
         $this->expectException(FailedToRetrieveFileException::class);
@@ -286,7 +286,7 @@ class FileCacheFunctionMockTest extends TestCase
         $this->assertTrue(flock($writingProcessHandle, LOCK_EX), "Failed to acquire LOCK_EX for writing simulation.");
 
         // Mock flock to simulate waiting for lock release
-        $flockMock = $this->getFunctionMock('Jackardios\\FileCache', 'flock');
+        $flockMock = $this->getFunctionMock('Jackardios\\FileStash', 'flock');
         $lockAttempt = 0;
         $maxAttemptsBeforeSuccess = 3;
         $sharedLockHandle = null;
@@ -316,7 +316,7 @@ class FileCacheFunctionMockTest extends TestCase
                 }
             );
 
-        $usleepMock = $this->getFunctionMock('Jackardios\\FileCache', 'usleep');
+        $usleepMock = $this->getFunctionMock('Jackardios\\FileStash', 'usleep');
         $usleepMock->expects($this->exactly($maxAttemptsBeforeSuccess));
 
         $resultPath = $cache->get($file, $this->noop, false);
@@ -343,14 +343,14 @@ class FileCacheFunctionMockTest extends TestCase
             ['read_timeout' => 0.1]
         );
 
-        $streamCopyMock = $this->getFunctionMock('Jackardios\\FileCache', 'stream_copy_to_stream');
+        $streamCopyMock = $this->getFunctionMock('Jackardios\\FileStash', 'stream_copy_to_stream');
         $streamCopyMock->expects($this->once())
             ->willReturnCallback(function ($source, $dest, $maxLength) {
                 fwrite($dest, 'some partial data');
                 return false;
             });
 
-        $streamMetaMock = $this->getFunctionMock('Jackardios\\FileCache', 'stream_get_meta_data');
+        $streamMetaMock = $this->getFunctionMock('Jackardios\\FileStash', 'stream_get_meta_data');
         $streamMetaMock->expects($this->atLeastOnce())
             ->willReturn(['timed_out' => true]);
 
@@ -381,7 +381,7 @@ class FileCacheFunctionMockTest extends TestCase
         $cacheStreamClosedBeforeCallback = 0;
         $cachePath = $this->cachePath;
 
-        $fcloseMock = $this->getFunctionMock('Jackardios\\FileCache', 'fclose');
+        $fcloseMock = $this->getFunctionMock('Jackardios\\FileStash', 'fclose');
         $fcloseMock->expects($this->atLeastOnce())
             ->willReturnCallback(function ($stream) use (&$callbackStarted, &$cacheStreamClosedBeforeCallback, $cachePath) {
                 $meta = stream_get_meta_data($stream);
@@ -417,7 +417,7 @@ class FileCacheFunctionMockTest extends TestCase
         $cacheStreamClosedBeforeCallback = 0;
         $cachePath = $this->cachePath;
 
-        $fcloseMock = $this->getFunctionMock('Jackardios\\FileCache', 'fclose');
+        $fcloseMock = $this->getFunctionMock('Jackardios\\FileStash', 'fclose');
         $fcloseMock->expects($this->atLeastOnce())
             ->willReturnCallback(function ($stream) use (&$callbackStarted, &$cacheStreamClosedBeforeCallback, $cachePath) {
                 $meta = stream_get_meta_data($stream);
@@ -447,7 +447,7 @@ class FileCacheFunctionMockTest extends TestCase
             'lifecycle_lock_timeout' => 0,
         ]);
 
-        $flockMock = $this->getFunctionMock('Jackardios\\FileCache', 'flock');
+        $flockMock = $this->getFunctionMock('Jackardios\\FileStash', 'flock');
         $flockMock->expects($this->atLeastOnce())->willReturn(false);
 
         $this->expectException(\RuntimeException::class);
@@ -466,7 +466,7 @@ class FileCacheFunctionMockTest extends TestCase
 
         // Mock time() to simulate timeout after a few iterations
         $baseTime = 1000000;
-        $timeMock = $this->getFunctionMock('Jackardios\\FileCache', 'time');
+        $timeMock = $this->getFunctionMock('Jackardios\\FileStash', 'time');
         $callCount = 0;
         $timeMock->expects($this->any())->willReturnCallback(function () use (&$callCount, $baseTime) {
             $callCount++;
@@ -480,7 +480,7 @@ class FileCacheFunctionMockTest extends TestCase
 
         $filesystemManagerMock = $this->createMock(FilesystemManager::class);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'max_age' => 1, // 1 minute
             'prune_timeout' => 1, // 1 second timeout

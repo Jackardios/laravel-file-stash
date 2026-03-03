@@ -1,260 +1,437 @@
-# File Cache
+# Laravel File Stash
 
+[![Tests](https://github.com/jackardios/laravel-file-stash/actions/workflows/tests.yml/badge.svg)](https://github.com/jackardios/laravel-file-stash/actions/workflows/tests.yml)
 
-Fetch and cache files from local filesystem, cloud storage or public webservers in Laravel.
+**Fetch and cache files from HTTP, cloud storage, or any Laravel disk — safely, even under heavy concurrency.**
 
-The file cache is specifically designed for use in concurrent processing with multiple parallel queue workers.
+---
 
-[![Tests](https://github.com/jackardios/laravel-file-cache/actions/workflows/tests.yml/badge.svg)](https://github.com/jackardios/laravel-file-cache/actions/workflows/tests.yml)
+## The Problem
 
-## Requirements
+You have queue workers processing jobs that need the same files — images, documents, exports. Each worker fetches its own copy. Downloads duplicate. Disk fills up. Workers corrupt each other's writes. Pruning deletes a file another worker is reading.
 
-- PHP ^8.1
-- Laravel ^10.0 || ^11.0 || ^12.0
+```
+Worker A ──fetch──► image.jpg ──write──► /cache/abc123   ✗ corrupt
+Worker B ──fetch──► image.jpg ──write──► /cache/abc123   ✗ overwrite
+Worker C ──────────read───────────────► /cache/abc123   ✗ partial data
+Pruner   ──────────delete─────────────► /cache/abc123   ✗ gone mid-read
+```
+
+## The Solution
+
+File Stash gives every worker a safe, shared file cache with proper locking:
+
+```
+Worker A ──fetch──► image.jpg ──LOCK_EX──► /cache/abc123 ──unlock──► done
+Worker B ────────── (waits) ──────────────LOCK_SH──► read ──► done
+Worker C ────────── (waits) ──────────────LOCK_SH──► read ──► done
+Pruner   ────────── (waits for all readers) ────────────────► prune
+```
+
+**One download. Shared reads. No corruption. No race conditions.**
+
+---
+
+## How It Works
+
+```
+                          ┌──────────────────────────────┐
+                          │        File Stash Cache       │
+                          │   /storage/cache/files/       │
+                          │                               │
+  ┌─────────────┐  get()  │  ┌────────┐   File exists?   │
+  │  Worker 1   │────────►│  │ SHA-256 │──── yes ──► LOCK_SH ──► read ──► callback
+  └─────────────┘         │  │  hash   │                  │
+  ┌─────────────┐  get()  │  │         │──── no ───► fetch ──► LOCK_EX ──► write
+  │  Worker 2   │────────►│  └────────┘              │    │
+  └─────────────┘         │                          │    │
+  ┌─────────────┐  get()  │     Sources:             │    │
+  │  Worker 3   │────────►│     • https://...   ◄────┘    │
+  └─────────────┘         │     • s3://...                │
+                          │     • local://...             │
+  ┌─────────────┐ prune() │                               │
+  │  Scheduler  │────────►│  Lifecycle lock prevents      │
+  └─────────────┘         │  pruning during batch ops     │
+                          └──────────────────────────────┘
+```
+
+Each file is identified by a SHA-256 hash of its URL. The first worker to request a file fetches and caches it; subsequent workers read the cached copy through a shared lock. Pruning and batch operations coordinate via lifecycle locks so files are never deleted while in use.
+
+---
 
 ## Installation
 
+```bash
+composer require jackardios/laravel-file-stash
 ```
-composer require jackardios/laravel-file-cache
-```
 
-### Laravel
+The service provider and `FileStash` facade are auto-discovered.
 
-The service provider and `FileCache` facade are auto-discovered by Laravel.
-
-### Publishing Configuration
+Publish the config (optional):
 
 ```bash
-php artisan vendor:publish --provider="Jackardios\FileCache\FileCacheServiceProvider" --tag="config"
+php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProvider" --tag="config"
 ```
 
-## Usage
+**Requirements:** PHP ^8.1, Laravel ^10 / ^11 / ^12
 
-Take a look at the [`FileCache`](src/Contracts/FileCache.php) contract to see the public API of the file cache. Example:
+---
+
+## Quick Start
+
+### Cache a remote file
 
 ```php
-use FileCache;
-use Jackardios\FileCache\GenericFile;
+use FileStash;
+use Jackardios\FileStash\GenericFile;
 
-// Implements Jackardios\FileCache\Contracts\File.
-$file = new GenericFile('https://example.com/images/image.jpg');
+$file = new GenericFile('https://example.com/reports/q4.pdf');
 
-FileCache::get($file, function ($file, $path) {
-    // do stuff
+$result = FileStash::get($file, function ($file, $cachedPath) {
+    // $cachedPath is a local path — read, copy, process, anything
+    return Storage::put('reports/q4.pdf', file_get_contents($cachedPath));
 });
 ```
 
-If the file URL specifies another protocol than `http` or `https` (e.g. `mydisk://images/image.jpg`), the file cache looks for the file in the appropriate storage disk configured at `filesystems.disks`. You can not use a local file path as URL (e.g. `/vol/images/image.jpg`). Instead, configure a storage disk with the `local` driver.
+### Cache a file from a Laravel storage disk
 
-### Batch Processing
-
-Process multiple files at once while maintaining locks to prevent pruning during processing:
+Any configured disk works — S3, GCS, SFTP, local:
 
 ```php
-use FileCache;
-use Jackardios\FileCache\GenericFile;
+$file = new GenericFile('s3://bucket-exports/report.csv');
 
+FileStash::get($file, function ($file, $path) {
+    // Process the CSV from local cache
+});
+```
+
+### Batch processing
+
+Process multiple files while holding a lifecycle lock that prevents pruning:
+
+```php
 $files = [
-    new GenericFile('https://example.com/image1.jpg'),
-    new GenericFile('https://example.com/image2.jpg'),
+    new GenericFile('https://cdn.example.com/img1.jpg'),
+    new GenericFile('https://cdn.example.com/img2.jpg'),
+    new GenericFile('https://cdn.example.com/img3.jpg'),
 ];
 
-FileCache::batch($files, function ($files, $paths) {
-    // $paths contains cached file paths in the same order as $files
-    foreach ($paths as $path) {
-        // process each file
+FileStash::batch($files, function ($files, $paths) {
+    // All paths are guaranteed to exist for the duration of this callback
+    // Pruner cannot delete them while you work
+    foreach ($paths as $i => $path) {
+        Image::make($path)->resize(300, 300)->save();
     }
 });
 ```
 
-### One-time Files
+### One-time files (auto-cleanup)
 
-Use `getOnce()` or `batchOnce()` to automatically delete cached files after processing:
+Files are deleted after the callback completes:
 
 ```php
-FileCache::getOnce($file, function ($file, $path) {
-    // File will be deleted after callback completes
+FileStash::getOnce($file, function ($file, $path) {
+    Mail::send([], [], fn ($m) => $m->attach($path));
+});
+// File is automatically removed from cache
+```
+
+---
+
+## File Sources
+
+URLs determine where files are fetched from:
+
+| URL format | Source | Example |
+|---|---|---|
+| `https://...` or `http://...` | Remote HTTP via Guzzle | `https://cdn.example.com/photo.jpg` |
+| `diskname://path` | Any Laravel filesystem disk | `s3://exports/data.csv` |
+
+> Local paths like `/var/files/image.jpg` are not supported directly. Configure a [local disk](https://laravel.com/docs/filesystem#the-local-driver) and use `mydisk://image.jpg`.
+
+---
+
+## Concurrency Model
+
+File Stash is designed for environments with multiple parallel queue workers processing the same files. Here's what happens under load:
+
+### Concurrent reads — safe
+
+```
+Worker A ─── get("img.jpg") ──► LOCK_SH ──► read ──► unlock
+Worker B ─── get("img.jpg") ──► LOCK_SH ──► read ──► unlock   (parallel, no waiting)
+Worker C ─── get("img.jpg") ──► LOCK_SH ──► read ──► unlock
+```
+
+Multiple workers can read the same cached file simultaneously. Shared locks (`LOCK_SH`) do not block each other.
+
+### Write during reads — safe
+
+```
+Worker A ─── get("new.jpg") ──► cache miss ──► LOCK_EX ──► download + write ──► unlock
+Worker B ─── get("new.jpg") ──► cache miss ──► waits... ──────────────────────► LOCK_SH ──► read
+```
+
+If two workers request the same uncached file, one acquires the exclusive lock and fetches; the other waits, then reads the cached result.
+
+### Batch + prune — safe
+
+```
+Worker  ─── batch([a, b, c]) ──► lifecycle lock (shared) ──► process ──► unlock
+Pruner  ─── prune()           ──► waits for lifecycle lock ─────────────► prune
+```
+
+Batch operations hold a shared lifecycle lock. The pruner acquires an exclusive lifecycle lock, so it waits until all batch operations complete before deleting anything.
+
+### Lock configuration
+
+```php
+// config/file-stash.php
+'lock_max_attempts'      => 3,    // retries before giving up
+'lock_wait_timeout'      => -1,   // seconds to wait (-1 = forever)
+'lifecycle_lock_timeout' => 30,   // seconds for batch/prune coordination
+```
+
+For strict latency requirements, throw instead of waiting:
+
+```php
+use Jackardios\FileStash\Exceptions\FileLockedException;
+
+try {
+    FileStash::get($file, $callback, throwOnLock: true);
+} catch (FileLockedException) {
+    // File is busy, handle gracefully
+}
+```
+
+---
+
+## API Reference
+
+### Core Methods
+
+```php
+// Cache and use a file
+FileStash::get(File $file, ?callable $callback, bool $throwOnLock = false): mixed
+
+// Cache, use, then delete
+FileStash::getOnce(File $file, ?callable $callback, bool $throwOnLock = false): mixed
+
+// Cache and use multiple files (prune-safe)
+FileStash::batch(array $files, ?callable $callback, bool $throwOnLock = false): mixed
+
+// Cache, use, then delete multiple files
+FileStash::batchOnce(array $files, ?callable $callback, bool $throwOnLock = false): mixed
+```
+
+### Cache Management
+
+```php
+FileStash::exists(File $file): bool          // Check if a file's source exists
+FileStash::forget(File $file): bool          // Remove a specific cached file
+FileStash::prune(): array                     // Remove expired/oversized files
+FileStash::clear(): void                      // Delete all unused cached files
+FileStash::metrics(): CacheMetrics            // Get hit/miss/eviction counters
+```
+
+---
+
+## Events
+
+Enable event dispatching for observability:
+
+```php
+// config/file-stash.php
+'events_enabled' => true,
+```
+
+| Event | When | Key properties |
+|---|---|---|
+| `CacheHit` | File served from cache | `$file`, `$cachedPath` |
+| `CacheMiss` | File not cached, fetching | `$file`, `$url` |
+| `CacheFileRetrieved` | File successfully cached | `$file`, `$cachedPath`, `$bytes`, `$source` |
+| `CacheFileEvicted` | File deleted from cache | `$path`, `$reason` |
+| `CachePruneCompleted` | Prune finished | `$deleted`, `$remaining`, `$totalSize`, `$completed` |
+
+All events are in the `Jackardios\FileStash\Events` namespace.
+
+When `events_enabled` is `false` (default), zero overhead — no objects allocated, no dispatching.
+
+```php
+use Jackardios\FileStash\Events\CacheHit;
+
+Event::listen(CacheHit::class, function (CacheHit $event) {
+    Log::info("Cache hit: {$event->file->getUrl()}");
 });
 ```
 
-### Check File Existence
+---
+
+## Metrics
+
+Track cache effectiveness per-process:
 
 ```php
-$exists = FileCache::exists($file);
+$metrics = FileStash::metrics();
+
+$metrics->hits;        // cache hits
+$metrics->misses;      // cache misses
+$metrics->retrievals;  // files fetched from source
+$metrics->evictions;   // files removed
+$metrics->errors;      // failed retrievals
+
+$metrics->hitRate();   // float|null — percentage
+$metrics->toArray();   // all counters as array
+$metrics->reset();     // zero out counters
 ```
 
-For remote files, `exists()` uses the HTTP retry settings (`http_retries`, `http_retry_delay`).
-HTTP response statuses outside 2xx are treated as "not exists" (`false`), including when a custom Guzzle client uses `http_errors=true`.
-It may throw network/storage exceptions (for example connection errors or unknown disks).
+Push to your monitoring stack:
+
+```php
+app()->terminating(function () {
+    $m = FileStash::metrics()->toArray();
+    // Send to Prometheus, StatsD, Datadog, etc.
+});
+```
+
+---
 
 ## Configuration
 
-The file cache comes with a sensible default configuration. You can override it in the `file-cache` namespace or with environment variables.
+All settings support environment variables. Publish the config to customize:
 
-### file-cache.max_file_size
+```bash
+php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProvider" --tag="config"
+```
 
-Default: `-1` (any size)
-Environment: `FILE_CACHE_MAX_FILE_SIZE`
+### Cache limits
 
-Maximum allowed size of a cached file in bytes. Set to `-1` to allow any size.
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `path` | — | `storage/framework/cache/files` | Cache directory |
+| `max_file_size` | `FILE_STASH_MAX_FILE_SIZE` | `-1` (unlimited) | Max file size in bytes |
+| `max_age` | `FILE_STASH_MAX_AGE` | `60` | TTL in minutes before pruning |
+| `max_size` | `FILE_STASH_MAX_SIZE` | `1E+9` (1 GB) | Soft limit for total cache size |
 
-### file-cache.max_age
+### HTTP
 
-Default: `60`
-Environment: `FILE_CACHE_MAX_AGE`
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `timeout` | `FILE_STASH_TIMEOUT` | `-1` | Total request timeout (seconds) |
+| `connect_timeout` | `FILE_STASH_CONNECT_TIMEOUT` | `30` | Connection timeout (seconds) |
+| `read_timeout` | `FILE_STASH_READ_TIMEOUT` | `30` | Stream read timeout (seconds) |
+| `http_retries` | `FILE_STASH_HTTP_RETRIES` | `0` | Retry attempts (4xx except 429 not retried) |
+| `http_retry_delay` | `FILE_STASH_HTTP_RETRY_DELAY` | `100` | Base delay in ms (exponential backoff) |
+| `user_agent` | `FILE_STASH_USER_AGENT` | `Laravel-FileStash/4.x` | User-Agent header |
+| `max_redirects` | `FILE_STASH_MAX_REDIRECTS` | `5` | Max redirects to follow |
 
-Maximum age in minutes of a file in the cache. Older files are pruned.
+### Security
 
-### file-cache.max_size
-
-Default: `1E+9` (1 GB)
-Environment: `FILE_CACHE_MAX_SIZE`
-
-Maximum size (soft limit) of the file cache in bytes. If the cache exceeds this size, old files are pruned.
-
-### file-cache.path
-
-Default: `'storage/framework/cache/files'`
-
-Directory to use for the file cache.
-
-### file-cache.timeout
-
-Default: `-1` (indefinitely)
-Environment: `FILE_CACHE_TIMEOUT`
-
-Total connection timeout when reading remote files in seconds. If loading the file takes longer than this, it will fail. Set to `-1` to wait indefinitely.
-
-### file-cache.connect_timeout
-
-Default: `30` (30 seconds)
-Environment: `FILE_CACHE_CONNECT_TIMEOUT`
-
-Timeout to initiate a connection to load a remote file in seconds. If it takes longer, it will fail. Set to `-1` to wait indefinitely.
-
-### file-cache.read_timeout
-
-Default: `30` (30 seconds)
-Environment: `FILE_CACHE_READ_TIMEOUT`
-
-Timeout for reading a stream of a remote file in seconds. If it takes longer, it will fail. Set to `-1` to wait indefinitely.
-
-### file-cache.prune_interval
-
-Default `'*/5 * * * *'` (every five minutes)
-
-Interval for the scheduled task to prune the file cache.
-
-### file-cache.prune_timeout
-
-Default: `300` (5 minutes)
-Environment: `FILE_CACHE_PRUNE_TIMEOUT`
-
-Timeout for the prune operation in seconds. If pruning takes longer than this, it will stop early. Set to `-1` for no timeout.
-
-### file-cache.mime_types
-
-Default: `[]` (allow all types)
-
-Array of allowed MIME types for cached files. Caching of files with other types will fail.
-
-### file-cache.allowed_hosts
-
-Default: `null` (all hosts allowed)
-Environment: `FILE_CACHE_ALLOWED_HOSTS`
-
-Allowed hosts for remote file fetching. This is a security feature to prevent SSRF (Server-Side Request Forgery) attacks. Set to `null` to allow all hosts, or provide an array of allowed hostnames.
-
-Wildcards (`*`) are supported at the beginning of hostnames:
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `allowed_hosts` | `FILE_STASH_ALLOWED_HOSTS` | `null` (all) | Host whitelist for SSRF protection |
+| `mime_types` | — | `[]` (all) | Allowed MIME types |
 
 ```php
-'allowed_hosts' => ['example.com', 'cdn.example.com', '*.trusted-domain.com'],
+// Wildcards supported
+'allowed_hosts' => ['example.com', '*.cdn.example.com'],
 ```
 
-For environment variable, use comma-separated values:
+```env
+# Comma-separated in .env
+FILE_STASH_ALLOWED_HOSTS=example.com,*.cdn.example.com
 ```
-FILE_CACHE_ALLOWED_HOSTS=example.com,cdn.example.com,*.trusted-domain.com
-```
 
-### file-cache.http_retries
+### Concurrency
 
-Default: `0` (no retries)
-Environment: `FILE_CACHE_HTTP_RETRIES`
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `lock_max_attempts` | `FILE_STASH_LOCK_MAX_ATTEMPTS` | `3` | Lock acquisition retries |
+| `lock_wait_timeout` | `FILE_STASH_LOCK_WAIT_TIMEOUT` | `-1` (forever) | Lock wait timeout (seconds) |
+| `lifecycle_lock_timeout` | `FILE_STASH_LIFECYCLE_LOCK_TIMEOUT` | `30` | Batch/prune coordination timeout |
+| `batch_chunk_size` | `FILE_STASH_BATCH_CHUNK_SIZE` | `100` | Files per chunk (prevents fd exhaustion) |
 
-Number of retry attempts for failed HTTP requests. Client errors (4xx except 429) are not retried.
-This applies to both `get()` and `exists()` for remote files.
+### Pruning
 
-### file-cache.http_retry_delay
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `prune_interval` | `FILE_STASH_PRUNE_INTERVAL` | `*/5 * * * *` | Cron schedule for auto-pruning |
+| `prune_timeout` | `FILE_STASH_PRUNE_TIMEOUT` | `300` | Prune timeout (seconds) |
 
-Default: `100` (100ms)
-Environment: `FILE_CACHE_HTTP_RETRY_DELAY`
-
-Delay between HTTP retry attempts in milliseconds.
-
-### file-cache.lifecycle_lock_timeout
-
-Default: `30` (seconds)
-Environment: `FILE_CACHE_LIFECYCLE_LOCK_TIMEOUT`
-
-Timeout to wait for lifecycle lock acquisition in seconds when coordinating `batch()`/`batchOnce()` with `prune()`/`clear()`.
-Set to `-1` to wait indefinitely.
-
-### file-cache.batch_chunk_size
-
-Default: `100`
-Environment: `FILE_CACHE_BATCH_CHUNK_SIZE`
-
-Maximum number of files to process in a single chunk during `batch()` and `batchOnce()`.
-Lower values reduce the number of simultaneously opened cached file streams and help avoid file descriptor exhaustion.
-Set to `-1` for no limit.
-
-### file-cache.lock_max_attempts
-
-Default: `3`
-Environment: `FILE_CACHE_LOCK_MAX_ATTEMPTS`
-
-Maximum number of attempts to acquire a lock on a file. Must be at least 1.
-
-### file-cache.lock_wait_timeout
-
-Default: `-1` (indefinitely)
-Environment: `FILE_CACHE_LOCK_WAIT_TIMEOUT`
-
-Timeout to wait for a lock on a file to be released in seconds. Set to `-1` to wait indefinitely.
-
-## Clearing
-
-The file cache is cleared when you call `php artisan cache:clear`.
-
-## Testing
-
-The `FileCache` facade provides a fake for easy testing. The fake does not actually fetch and store any files, but only executes the callback function with a faked file path.
+Prune manually or inspect results:
 
 ```php
-use FileCache;
-use Jackardios\FileCache\GenericFile;
-
-FileCache::fake();
-$file = new GenericFile('https://example.com/image.jpg');
-$path = FileCache::get($file, function ($file, $path) {
-    return $path;
-});
-
-$this->assertFalse($this->app['files']->exists($path));
+$stats = FileStash::prune();
+// ['deleted' => 12, 'remaining' => 48, 'total_size' => 524288000, 'completed' => true]
 ```
+
+The cache is also cleared automatically when you run `php artisan cache:clear`.
+
+### Performance
+
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `touch_interval` | `FILE_STASH_TOUCH_INTERVAL` | `60` | Min seconds between `touch()` on hot files |
+| `events_enabled` | `FILE_STASH_EVENTS_ENABLED` | `false` | Enable event dispatching |
+
+---
 
 ## Exceptions
 
-The following exceptions may be thrown:
+All exceptions are in `Jackardios\FileStash\Exceptions` with `public readonly` properties for structured handling:
 
-- `FileIsTooLargeException` - File exceeds configured `max_file_size`
-- `FileLockedException` - File is locked when `throwOnLock` is `true`
-- `HostNotAllowedException` - Host is not in the `allowed_hosts` whitelist
-- `MimeTypeIsNotAllowedException` - MIME type is not in the `mime_types` whitelist
-- `SourceResourceIsInvalidException` - Could not establish a valid stream resource
-- `SourceResourceTimedOutException` - Stream read operation timed out
-- `FailedToRetrieveFileException` - General file retrieval failure after all retries
-- `InvalidConfigurationException` - Invalid configuration values
+| Exception | When | Properties |
+|---|---|---|
+| `FileIsTooLargeException` | File exceeds `max_file_size` | `int $maxBytes` |
+| `FileLockedException` | File locked, `throwOnLock` is `true` | — |
+| `HostNotAllowedException` | Host not in `allowed_hosts` | `string $host` |
+| `MimeTypeIsNotAllowedException` | MIME type not allowed | `string $mimeType` |
+| `InvalidConfigurationException` | Invalid config value | `string $key`, `string $reason` |
+| `SourceResourceIsInvalidException` | Invalid stream resource | — |
+| `SourceResourceTimedOutException` | Stream read timed out | — |
+| `FailedToRetrieveFileException` | All retries exhausted | — |
+
+```php
+use Jackardios\FileStash\Exceptions\HostNotAllowedException;
+
+try {
+    FileStash::get($file, $callback);
+} catch (HostNotAllowedException $e) {
+    Log::warning("Blocked: {$e->host}");
+}
+```
+
+---
+
+## Testing
+
+The facade ships with a fake that skips real HTTP/disk operations:
+
+```php
+use FileStash;
+use Jackardios\FileStash\GenericFile;
+
+public function test_it_processes_file(): void
+{
+    FileStash::fake();
+
+    $file = new GenericFile('https://example.com/image.jpg');
+
+    $result = FileStash::get($file, fn ($file, $path) => 'processed');
+
+    $this->assertEquals('processed', $result);
+}
+```
+
+The fake supports all contract methods: `get`, `getOnce`, `batch`, `batchOnce`, `forget`, `exists`, `prune`, `clear`, `metrics`.
+
+---
+
+## Acknowledgements
+
+This package is based on [biigle/laravel-file-cache](https://github.com/biigle/laravel-file-cache) by Martin Zurowietz. It extends the original with lifecycle locks, batch chunking, events, metrics, SSRF protection, HTTP retries, and other improvements.
+
+---
 
 ## License
 

@@ -1,5 +1,5 @@
 {
-    "name": "jackardios/laravel-file-cache",
+    "name": "jackardios/laravel-file-stash",
     "description": "Fetch and cache files from local filesystem, cloud storage or public webservers in Laravel",
     "type": "library",
     "license": "MIT",
@@ -22,18 +22,22 @@
     },
     "authors": [
         {
+            "name": "Salavat Salakhutdinov",
+            "email": "salahutdinov.salavat@gmail.com"
+        },
+        {
             "name": "Martin Zurowietz",
             "email": "martin@cebitec.uni-bielefeld.de"
         }
     ],
     "autoload": {
         "psr-4": {
-            "Jackardios\\FileCache\\": "src"
+            "Jackardios\\FileStash\\": "src"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Jackardios\\FileCache\\Tests\\": "tests/"
+            "Jackardios\\FileStash\\Tests\\": "tests/"
         },
         "classmap": [
             "tests/TestCase.php"
@@ -47,10 +51,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "Jackardios\\FileCache\\FileCacheServiceProvider"
+                "Jackardios\\FileStash\\FileStashServiceProvider"
             ],
             "aliases": {
-                "FileCache": "Jackardios\\FileCache\\Facades\\FileCache"
+                "FileStash": "Jackardios\\FileStash\\Facades\\FileStash"
             }
         }
     }

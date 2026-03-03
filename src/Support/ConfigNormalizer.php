@@ -1,8 +1,8 @@
 <?php
 
-namespace Jackardios\FileCache\Support;
+namespace Jackardios\FileStash\Support;
 
-use Jackardios\FileCache\Exceptions\InvalidConfigurationException;
+use Jackardios\FileStash\Exceptions\InvalidConfigurationException;
 
 /**
  * Normalize and validate file cache configuration.
@@ -56,7 +56,7 @@ final class ConfigNormalizer
             'http_retry_delay' => 100, // 100ms base delay for retries (exponential backoff)
             'lifecycle_lock_timeout' => 30.0, // 30 seconds (-1 = indefinitely)
             'batch_chunk_size' => 100, // chunk size for batch operations
-            'user_agent' => 'Laravel-FileCache/4.x',
+            'user_agent' => 'Laravel-FileStash/4.x',
             'max_redirects' => 5,
             'touch_interval' => 60, // seconds between touch() calls
             'events_enabled' => false,
@@ -99,7 +99,7 @@ final class ConfigNormalizer
     private static function loadLaravelConfig(): array
     {
         try {
-            $config = config('file-cache', []);
+            $config = config('file-stash', []);
             if (!is_array($config)) {
                 return [];
             }
@@ -122,7 +122,7 @@ final class ConfigNormalizer
         try {
             return storage_path('framework/cache/files');
         } catch (\Throwable) {
-            return sys_get_temp_dir() . '/laravel-file-cache';
+            return sys_get_temp_dir() . '/laravel-file-stash';
         }
     }
 

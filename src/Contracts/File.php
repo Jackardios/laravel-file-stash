@@ -1,6 +1,6 @@
 <?php
 
-namespace Jackardios\FileCache\Contracts;
+namespace Jackardios\FileStash\Contracts;
 
 interface File
 {

@@ -1,14 +1,14 @@
 <?php
 
-namespace Jackardios\FileCache\Tests;
+namespace Jackardios\FileStash\Tests;
 
-use Jackardios\FileCache\Contracts\File;
-use Jackardios\FileCache\Exceptions\FileIsTooLargeException;
-use Jackardios\FileCache\Exceptions\FileLockedException;
-use Jackardios\FileCache\Exceptions\InvalidConfigurationException;
-use Jackardios\FileCache\Exceptions\MimeTypeIsNotAllowedException;
-use Jackardios\FileCache\FileCache;
-use Jackardios\FileCache\GenericFile;
+use Jackardios\FileStash\Contracts\File;
+use Jackardios\FileStash\Exceptions\FileIsTooLargeException;
+use Jackardios\FileStash\Exceptions\FileLockedException;
+use Jackardios\FileStash\Exceptions\InvalidConfigurationException;
+use Jackardios\FileStash\Exceptions\MimeTypeIsNotAllowedException;
+use Jackardios\FileStash\FileStash;
+use Jackardios\FileStash\GenericFile;
 use Exception;
 use GuzzleHttp\Client;
 use GuzzleHttp\Handler\MockHandler;
@@ -17,22 +17,22 @@ use GuzzleHttp\Psr7\Response;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Filesystem\FilesystemManager;
-use Jackardios\FileCache\Exceptions\FailedToRetrieveFileException;
-use Jackardios\FileCache\Exceptions\HostNotAllowedException;
-use Jackardios\FileCache\Events\CacheHit;
-use Jackardios\FileCache\Events\CacheMiss;
-use Jackardios\FileCache\Events\CacheFileRetrieved;
-use Jackardios\FileCache\Events\CacheFileEvicted;
-use Jackardios\FileCache\Events\CachePruneCompleted;
-use Jackardios\FileCache\Support\CacheMetrics;
-use Jackardios\FileCache\Testing\FileCacheFake;
+use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
+use Jackardios\FileStash\Exceptions\HostNotAllowedException;
+use Jackardios\FileStash\Events\CacheHit;
+use Jackardios\FileStash\Events\CacheMiss;
+use Jackardios\FileStash\Events\CacheFileRetrieved;
+use Jackardios\FileStash\Events\CacheFileEvicted;
+use Jackardios\FileStash\Events\CachePruneCompleted;
+use Jackardios\FileStash\Support\CacheMetrics;
+use Jackardios\FileStash\Testing\FileStashFake;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Psr7\Request;
 use Illuminate\Contracts\Events\Dispatcher;
 use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionMethod;
 
-class FileCacheTest extends TestCase
+class FileStashTest extends TestCase
 {
     protected string $cachePath;
     protected string $diskPath;
@@ -72,24 +72,24 @@ class FileCacheTest extends TestCase
     }
 
     /**
-     * Create a FileCache instance with default path.
+     * Create a FileStash instance with default path.
      */
-    protected function createCache(array $config = []): FileCache
+    protected function createCache(array $config = []): FileStash
     {
-        return new FileCache(array_merge(['path' => $this->cachePath], $config));
+        return new FileStash(array_merge(['path' => $this->cachePath], $config));
     }
 
     /**
-     * Create a FileCache with a mock HTTP client.
+     * Create a FileStash with a mock HTTP client.
      */
-    protected function createCacheWithMockClient(array $responses, array $config = [], bool $httpErrors = false): FileCache
+    protected function createCacheWithMockClient(array $responses, array $config = [], bool $httpErrors = false): FileStash
     {
         $mock = new MockHandler($responses);
         $client = new Client([
             'handler' => HandlerStack::create($mock),
             'http_errors' => $httpErrors,
         ]);
-        return new FileCache(array_merge(['path' => $this->cachePath], $config), $client);
+        return new FileStash(array_merge(['path' => $this->cachePath], $config), $client);
     }
 
     /**
@@ -645,7 +645,7 @@ class FileCacheTest extends TestCase
     public function testEncodeUrl(string $inputUrl, string $expectedUrl)
     {
         $cache = $this->createCache();
-        $method = new ReflectionMethod(FileCache::class, 'encodeUrl');
+        $method = new ReflectionMethod(FileStash::class, 'encodeUrl');
         $method->setAccessible(true);
 
         $this->assertEquals($expectedUrl, $method->invoke($cache, $inputUrl));
@@ -723,7 +723,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('max_file_size');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'max_file_size' => -2, // Invalid: must be -1 or positive
         ]);
@@ -734,7 +734,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('max_age');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'max_age' => 0, // Invalid: must be at least 1
         ]);
@@ -745,7 +745,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('lock_max_attempts');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'lock_max_attempts' => 0, // Invalid: must be at least 1
         ]);
@@ -753,12 +753,12 @@ class FileCacheTest extends TestCase
 
     public function testAllowedHostsValidation()
     {
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'allowed_hosts' => ['example.com', 'cdn.example.com'],
         ]);
 
-        $method = new ReflectionMethod(FileCache::class, 'validateHost');
+        $method = new ReflectionMethod(FileStash::class, 'validateHost');
         $method->setAccessible(true);
 
         // Should not throw for allowed host
@@ -766,18 +766,18 @@ class FileCacheTest extends TestCase
         $method->invoke($cache, 'https://cdn.example.com/image.jpg');
 
         // Should throw for disallowed host
-        $this->expectException(\Jackardios\FileCache\Exceptions\HostNotAllowedException::class);
+        $this->expectException(\Jackardios\FileStash\Exceptions\HostNotAllowedException::class);
         $method->invoke($cache, 'https://evil.com/image.jpg');
     }
 
     public function testAllowedHostsWildcard()
     {
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'allowed_hosts' => ['*.example.com'],
         ]);
 
-        $method = new ReflectionMethod(FileCache::class, 'validateHost');
+        $method = new ReflectionMethod(FileStash::class, 'validateHost');
         $method->setAccessible(true);
 
         // Should allow subdomains
@@ -788,18 +788,18 @@ class FileCacheTest extends TestCase
         $method->invoke($cache, 'https://example.com/image.jpg');
 
         // Should throw for different domain
-        $this->expectException(\Jackardios\FileCache\Exceptions\HostNotAllowedException::class);
+        $this->expectException(\Jackardios\FileStash\Exceptions\HostNotAllowedException::class);
         $method->invoke($cache, 'https://notexample.com/image.jpg');
     }
 
     public function testAllowedHostsNullAllowsAll()
     {
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'allowed_hosts' => null,
         ]);
 
-        $method = new ReflectionMethod(FileCache::class, 'validateHost');
+        $method = new ReflectionMethod(FileStash::class, 'validateHost');
         $method->setAccessible(true);
 
         // Should allow any host when allowed_hosts is null
@@ -817,8 +817,8 @@ class FileCacheTest extends TestCase
 
     public function testEncodeUrlBrackets()
     {
-        $cache = new FileCache(['path' => $this->cachePath]);
-        $method = new ReflectionMethod(FileCache::class, 'encodeUrl');
+        $cache = new FileStash(['path' => $this->cachePath]);
+        $method = new ReflectionMethod(FileStash::class, 'encodeUrl');
         $method->setAccessible(true);
 
         $this->assertEquals(
@@ -829,8 +829,8 @@ class FileCacheTest extends TestCase
 
     public function testEncodeUrlPreservesIpv6HostBrackets()
     {
-        $cache = new FileCache(['path' => $this->cachePath]);
-        $method = new ReflectionMethod(FileCache::class, 'encodeUrl');
+        $cache = new FileStash(['path' => $this->cachePath]);
+        $method = new ReflectionMethod(FileStash::class, 'encodeUrl');
         $method->setAccessible(true);
 
         $this->assertEquals(
@@ -865,7 +865,7 @@ class FileCacheTest extends TestCase
             $files[] = new GenericFile('test://test-image.jpg');
         }
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'batch_chunk_size' => 2, // Process in chunks of 2
         ]);
@@ -892,7 +892,7 @@ class FileCacheTest extends TestCase
         }
 
         // batch_chunk_size = -1 disables chunking
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'batch_chunk_size' => -1,
         ]);
@@ -916,7 +916,7 @@ class FileCacheTest extends TestCase
             new Response(200, [], file_get_contents(__DIR__.'/files/test-image.jpg')),
         ]);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'http_retries' => 1,
             'http_retry_delay' => 10, // 10ms
@@ -941,7 +941,7 @@ class FileCacheTest extends TestCase
             new Response(200, [], file_get_contents(__DIR__.'/files/test-image.jpg')),
         ]);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'http_retries' => 1,
             'http_retry_delay' => 10,
@@ -964,7 +964,7 @@ class FileCacheTest extends TestCase
             new Response(404, [], 'Not Found'),
         ]);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'http_retries' => 3,
         ], new Client([
@@ -989,7 +989,7 @@ class FileCacheTest extends TestCase
             new Response(200, [], file_get_contents(__DIR__.'/files/test-image.jpg')),
         ]);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'http_retries' => 1,
             'http_retry_delay' => 10,
@@ -1007,7 +1007,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('max_size');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'max_size' => -1, // Invalid: must be 0 or positive
         ]);
@@ -1018,7 +1018,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('lock_wait_timeout');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'lock_wait_timeout' => -2, // Invalid: must be -1 or non-negative
         ]);
@@ -1029,7 +1029,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('timeout');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'timeout' => -2, // Invalid: must be -1 or non-negative
         ]);
@@ -1040,7 +1040,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('connect_timeout');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'connect_timeout' => -2, // Invalid: must be -1 or non-negative
         ]);
@@ -1051,7 +1051,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('read_timeout');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'read_timeout' => -2, // Invalid: must be -1 or non-negative
         ]);
@@ -1062,7 +1062,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('prune_timeout');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'prune_timeout' => -2, // Invalid: must be -1 or non-negative
         ]);
@@ -1073,7 +1073,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('lifecycle_lock_timeout');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'lifecycle_lock_timeout' => -2, // Invalid: must be -1 or non-negative
         ]);
@@ -1084,7 +1084,7 @@ class FileCacheTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessage('batch_chunk_size');
 
-        new FileCache([
+        new FileStash([
             'path' => $this->cachePath,
             'batch_chunk_size' => 0, // Invalid: must be -1 or positive
         ]);
@@ -1093,12 +1093,12 @@ class FileCacheTest extends TestCase
     public function testAllowedHostsFromEnvString()
     {
         // Simulate env string format (comma-separated)
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'allowed_hosts' => 'example.com, cdn.example.com, *.trusted.com',
         ]);
 
-        $method = new ReflectionMethod(FileCache::class, 'validateHost');
+        $method = new ReflectionMethod(FileStash::class, 'validateHost');
         $method->setAccessible(true);
 
         // Should not throw for allowed hosts
@@ -1107,18 +1107,18 @@ class FileCacheTest extends TestCase
         $method->invoke($cache, 'https://sub.trusted.com/image.jpg');
 
         // Should throw for disallowed host
-        $this->expectException(\Jackardios\FileCache\Exceptions\HostNotAllowedException::class);
+        $this->expectException(\Jackardios\FileStash\Exceptions\HostNotAllowedException::class);
         $method->invoke($cache, 'https://evil.com/image.jpg');
     }
 
     public function testAllowedHostsEmptyAllowsAll()
     {
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'allowed_hosts' => [], // Empty array should allow all
         ]);
 
-        $method = new ReflectionMethod(FileCache::class, 'validateHost');
+        $method = new ReflectionMethod(FileStash::class, 'validateHost');
         $method->setAccessible(true);
 
         // Should allow any host when allowed_hosts is empty
@@ -1127,10 +1127,10 @@ class FileCacheTest extends TestCase
 
     public function testLifecycleLockPathUsesNormalizedCachePath()
     {
-        $cacheWithPlainPath = new FileCache(['path' => $this->cachePath]);
-        $cacheWithTrailingSlash = new FileCache(['path' => $this->cachePath . '/']);
+        $cacheWithPlainPath = new FileStash(['path' => $this->cachePath]);
+        $cacheWithTrailingSlash = new FileStash(['path' => $this->cachePath . '/']);
 
-        $method = new ReflectionMethod(FileCache::class, 'getLifecycleLockPath');
+        $method = new ReflectionMethod(FileStash::class, 'getLifecycleLockPath');
         $method->setAccessible(true);
 
         $this->assertSame(
@@ -1141,15 +1141,15 @@ class FileCacheTest extends TestCase
 
     public function testAllowedHostsThrowsOnEmptyHost()
     {
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'allowed_hosts' => ['example.com'],
         ]);
 
-        $method = new ReflectionMethod(FileCache::class, 'validateHost');
+        $method = new ReflectionMethod(FileStash::class, 'validateHost');
         $method->setAccessible(true);
 
-        $this->expectException(\Jackardios\FileCache\Exceptions\HostNotAllowedException::class);
+        $this->expectException(\Jackardios\FileStash\Exceptions\HostNotAllowedException::class);
         $this->expectExceptionMessage('(empty)');
         $method->invoke($cache, '/no-host-url');
     }
@@ -1162,7 +1162,7 @@ class FileCacheTest extends TestCase
             new Response(200, [], file_get_contents(__DIR__.'/files/test-image.jpg')),
         ]);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'allowed_hosts' => ['allowed.example.com'],
         ], new Client(['handler' => HandlerStack::create($mock)]));
@@ -1179,12 +1179,12 @@ class FileCacheTest extends TestCase
             new Response(200, [], file_get_contents(__DIR__.'/files/test-image.jpg')),
         ]);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'allowed_hosts' => ['allowed.example.com'],
         ], new Client(['handler' => HandlerStack::create($mock)]));
 
-        $this->expectException(\Jackardios\FileCache\Exceptions\HostNotAllowedException::class);
+        $this->expectException(\Jackardios\FileStash\Exceptions\HostNotAllowedException::class);
         $cache->get($file, $this->noop);
     }
 
@@ -1196,12 +1196,12 @@ class FileCacheTest extends TestCase
             new Response(200),
         ]);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'allowed_hosts' => ['allowed.example.com'],
         ], new Client(['handler' => HandlerStack::create($mock)]));
 
-        $this->expectException(\Jackardios\FileCache\Exceptions\HostNotAllowedException::class);
+        $this->expectException(\Jackardios\FileStash\Exceptions\HostNotAllowedException::class);
         $cache->exists($file);
     }
 
@@ -1212,7 +1212,7 @@ class FileCacheTest extends TestCase
             new Response(200, ['content-type' => 'text/plain; charset=utf-8']),
         ]);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'mime_types' => ['text/plain'],
         ], new Client(['handler' => HandlerStack::create($mock)]));
@@ -1227,7 +1227,7 @@ class FileCacheTest extends TestCase
         $hash = hash('sha256', 'fixtures://test-image.jpg');
         $cachedPath = "{$this->cachePath}/{$hash}";
 
-        $cache = new FileCache(['path' => $this->cachePath]);
+        $cache = new FileStash(['path' => $this->cachePath]);
 
         $pathInCallback = null;
         $cache->batchOnce([$file], function ($files, $paths) use (&$pathInCallback) {
@@ -1246,7 +1246,7 @@ class FileCacheTest extends TestCase
         $hash = hash('sha256', 'fixtures://test-image.jpg');
         $cachedPath = "{$this->cachePath}/{$hash}";
 
-        $cache = new FileCache(['path' => $this->cachePath]);
+        $cache = new FileStash(['path' => $this->cachePath]);
 
         try {
             $cache->batchOnce([$file], function ($files, $paths) {
@@ -1264,7 +1264,7 @@ class FileCacheTest extends TestCase
     public function testBatchOncePreservesPrimaryExceptionWhenCleanupFails()
     {
         $file = new GenericFile('fixtures://test-image.jpg');
-        $cache = new class(['path' => $this->cachePath]) extends FileCache {
+        $cache = new class(['path' => $this->cachePath]) extends FileStash {
             protected function withLifecycleExclusiveLock(callable $callback)
             {
                 throw new \RuntimeException('cleanup failed');
@@ -1304,7 +1304,7 @@ class FileCacheTest extends TestCase
     public function testPruneOnNonExistentPath()
     {
         $nonExistentPath = sys_get_temp_dir() . '/non_existent_path_' . uniqid();
-        $cache = new FileCache(['path' => $nonExistentPath]);
+        $cache = new FileStash(['path' => $nonExistentPath]);
 
         $this->assertSame(['deleted' => 0, 'remaining' => 0, 'total_size' => 0, 'completed' => true], $cache->prune());
     }
@@ -1312,7 +1312,7 @@ class FileCacheTest extends TestCase
     public function testClearOnNonExistentPath()
     {
         $nonExistentPath = sys_get_temp_dir() . '/non_existent_path_' . uniqid();
-        $cache = new FileCache(['path' => $nonExistentPath]);
+        $cache = new FileStash(['path' => $nonExistentPath]);
 
         $this->assertDirectoryDoesNotExist($nonExistentPath);
         $cache->clear();
@@ -1325,7 +1325,7 @@ class FileCacheTest extends TestCase
         $this->assertDirectoryDoesNotExist($newPath);
 
         $file = new GenericFile('fixtures://test-file.txt');
-        $cache = new FileCache(['path' => $newPath]);
+        $cache = new FileStash(['path' => $newPath]);
 
         try {
             $cache->get($file, $this->noop);
@@ -1338,7 +1338,7 @@ class FileCacheTest extends TestCase
     public function testGetDefaultCallback()
     {
         $file = new GenericFile('fixtures://test-file.txt');
-        $cache = new FileCache(['path' => $this->cachePath]);
+        $cache = new FileStash(['path' => $this->cachePath]);
 
         // get() without callback should return path
         $result = $cache->get($file);
@@ -1351,7 +1351,7 @@ class FileCacheTest extends TestCase
         $this->app['files']->put("{$this->diskPath}/test-image.jpg", 'abc');
         $file = new GenericFile('test://test-image.jpg');
 
-        $cache = new FileCache(['path' => $this->cachePath]);
+        $cache = new FileStash(['path' => $this->cachePath]);
 
         // batch() without callback should return array of paths
         $result = $cache->batch([$file]);
@@ -1363,7 +1363,7 @@ class FileCacheTest extends TestCase
     public function testGetOnceDefaultCallback()
     {
         $file = new GenericFile('fixtures://test-file.txt');
-        $cache = new FileCache(['path' => $this->cachePath]);
+        $cache = new FileStash(['path' => $this->cachePath]);
 
         // getOnce() without callback should return path (and delete file)
         $result = $cache->getOnce($file);
@@ -1373,7 +1373,7 @@ class FileCacheTest extends TestCase
     public function testBatchOnceDefaultCallback()
     {
         $file = new GenericFile('fixtures://test-file.txt');
-        $cache = new FileCache(['path' => $this->cachePath]);
+        $cache = new FileStash(['path' => $this->cachePath]);
 
         // batchOnce() without callback should return array of paths
         $result = $cache->batchOnce([$file]);
@@ -1386,7 +1386,7 @@ class FileCacheTest extends TestCase
         $this->app['files']->put("{$this->diskPath}/large-file.txt", str_repeat('x', 10000));
         $file = new GenericFile('test://large-file.txt');
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'max_file_size' => -1, // Unlimited
         ]);
@@ -1400,7 +1400,7 @@ class FileCacheTest extends TestCase
         $this->app['files']->put("{$this->diskPath}/large-file.txt", str_repeat('x', 10000));
         $file = new GenericFile('test://large-file.txt');
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'max_file_size' => -1, // Unlimited
         ]);
@@ -1414,7 +1414,7 @@ class FileCacheTest extends TestCase
             new Response(200, ['content-length' => 1000000]), // 1MB
         ]);
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'max_file_size' => -1, // Unlimited
         ], new Client(['handler' => HandlerStack::create($mock)]));
@@ -1435,7 +1435,7 @@ class FileCacheTest extends TestCase
         config(['filesystems.disks.test' => ['driver' => 'local', 'root' => $this->diskPath]]);
         $file = new GenericFile('test://non-existent-file.txt');
 
-        $cache = new FileCache(['path' => $this->cachePath]);
+        $cache = new FileStash(['path' => $this->cachePath]);
 
         $this->expectException(FileNotFoundException::class);
         $cache->get($file, $this->noop);
@@ -1452,7 +1452,7 @@ class FileCacheTest extends TestCase
 
         clearstatcache();
 
-        $cache = new FileCache([
+        $cache = new FileStash([
             'path' => $this->cachePath,
             'max_size' => 100, // Only allow 100 bytes
             'max_age' => 60, // Don't prune by age
@@ -1485,7 +1485,7 @@ class FileCacheTest extends TestCase
         }
 
         // Use a subclass that forces isPruneTimedOut to return true after first file
-        $cache = new class(['path' => $this->cachePath, 'max_age' => 1, 'prune_timeout' => 300]) extends FileCache {
+        $cache = new class(['path' => $this->cachePath, 'max_age' => 1, 'prune_timeout' => 300]) extends FileStash {
             private int $pruneCheckCount = 0;
 
             protected function isPruneTimedOut(int $startTime, int $timeout, string $phase, ?int $remainingSize = null): bool
@@ -1579,7 +1579,7 @@ class FileCacheTest extends TestCase
             $dispatched[] = $event;
         });
 
-        $cache = new FileCache(
+        $cache = new FileStash(
             ['path' => $this->cachePath, 'events_enabled' => true],
             null,
             null,
@@ -1608,7 +1608,7 @@ class FileCacheTest extends TestCase
         $dispatcher = $this->createMock(Dispatcher::class);
         $dispatcher->expects($this->never())->method('dispatch');
 
-        $cache = new FileCache(
+        $cache = new FileStash(
             ['path' => $this->cachePath, 'events_enabled' => false],
             null,
             null,
@@ -1629,7 +1629,7 @@ class FileCacheTest extends TestCase
             $dispatched[] = $event;
         });
 
-        $cache = new FileCache(
+        $cache = new FileStash(
             ['path' => $this->cachePath, 'events_enabled' => true],
             null,
             null,
@@ -1654,7 +1654,7 @@ class FileCacheTest extends TestCase
             $dispatched[] = $event;
         });
 
-        $cache = new FileCache(
+        $cache = new FileStash(
             ['path' => $this->cachePath, 'events_enabled' => true],
             null,
             null,
@@ -1725,9 +1725,9 @@ class FileCacheTest extends TestCase
         }
     }
 
-    public function testFileCacheFakeForget()
+    public function testFileStashFakeForget()
     {
-        $fake = new FileCacheFake($this->app);
+        $fake = new FileStashFake($this->app);
         $file = new GenericFile('https://example.com/image.jpg');
 
         // Non-existent file
@@ -1960,7 +1960,7 @@ class FileCacheTest extends TestCase
         $this->app['files']->put("{$this->cachePath}/expired", 'content');
         touch("{$this->cachePath}/expired", time() - 7200);
 
-        $cache = new FileCache(
+        $cache = new FileStash(
             ['path' => $this->cachePath, 'max_age' => 1, 'events_enabled' => true],
             null,
             null,
@@ -1985,7 +1985,7 @@ class FileCacheTest extends TestCase
             $dispatched[] = $event;
         });
 
-        $cache = new FileCache(
+        $cache = new FileStash(
             ['path' => $this->cachePath, 'events_enabled' => true],
             null,
             null,
@@ -2004,9 +2004,9 @@ class FileCacheTest extends TestCase
         $this->assertCount(1, $evictions);
     }
 
-    public function testFileCacheFakeMetrics()
+    public function testFileStashFakeMetrics()
     {
-        $fake = new FileCacheFake($this->app);
+        $fake = new FileStashFake($this->app);
         $metrics = $fake->metrics();
         $this->assertInstanceOf(CacheMetrics::class, $metrics);
         $this->assertEquals(0, $metrics->hits);

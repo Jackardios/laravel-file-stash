@@ -1,14 +1,14 @@
 <?php
 
-namespace Jackardios\FileCache\Testing;
+namespace Jackardios\FileStash\Testing;
 
 use Illuminate\Contracts\Foundation\Application;
-use Jackardios\FileCache\Contracts\File;
-use Jackardios\FileCache\Contracts\FileCache as FileCacheContract;
-use Jackardios\FileCache\Support\CacheMetrics;
+use Jackardios\FileStash\Contracts\File;
+use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
+use Jackardios\FileStash\Support\CacheMetrics;
 use Illuminate\Filesystem\Filesystem;
 
-class FileCacheFake implements FileCacheContract
+class FileStashFake implements FileStashContract
 {
     protected string $path;
 
@@ -24,7 +24,7 @@ class FileCacheFake implements FileCacheContract
         $storagePath = $app?->storagePath() ?? storage_path();
 
         (new Filesystem)->cleanDirectory(
-            $root = "{$storagePath}/framework/testing/disks/file-cache"
+            $root = "{$storagePath}/framework/testing/disks/file-stash"
         );
 
         $this->path = $root;

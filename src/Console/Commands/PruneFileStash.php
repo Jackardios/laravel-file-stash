@@ -1,18 +1,18 @@
 <?php
 
-namespace Jackardios\FileCache\Console\Commands;
+namespace Jackardios\FileStash\Console\Commands;
 
-use Jackardios\FileCache\FileCache;
+use Jackardios\FileStash\FileStash;
 use Illuminate\Console\Command;
 
-class PruneFileCache extends Command
+class PruneFileStash extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'prune-file-cache {--silent : Suppress output}';
+    protected $signature = 'prune-file-stash {--silent : Suppress output}';
 
     /**
      * The console command description.
@@ -24,7 +24,7 @@ class PruneFileCache extends Command
     /**
      * Execute the console command.
      */
-    public function handle(FileCache $cache): int
+    public function handle(FileStash $cache): int
     {
         $stats = $cache->prune();
 

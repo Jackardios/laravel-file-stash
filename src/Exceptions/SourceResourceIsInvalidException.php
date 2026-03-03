@@ -1,6 +1,6 @@
 <?php
 
-namespace Jackardios\FileCache\Exceptions;
+namespace Jackardios\FileStash\Exceptions;
 
 use Exception;
 use Throwable;
