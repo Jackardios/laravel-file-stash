@@ -132,7 +132,10 @@ class FileStash implements FileStashContract
     {
         try {
             $dispatcher = app(Dispatcher::class);
-            return $dispatcher instanceof Dispatcher ? $dispatcher : null;
+            if (!$dispatcher instanceof Dispatcher) {
+                return null;
+            }
+            return $dispatcher;
         } catch (\Throwable) {
             return null;
         }
@@ -1015,6 +1018,7 @@ class FileStash implements FileStashContract
                 return null;
             }
 
+            /** @var array<string, mixed>|false $stat */
             $stat = fstat($cachedFileStream);
             if (!is_array($stat)) {
                 return null;

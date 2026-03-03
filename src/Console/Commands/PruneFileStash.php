@@ -29,7 +29,7 @@ class PruneFileStash extends Command
         $stats = $cache->prune();
 
         if (!$this->option('silent')) {
-            if (!($stats['completed'] ?? true)) {
+            if (!$stats['completed']) {
                 $this->warn('Prune operation did not complete (timed out).');
             } else {
                 $this->info('File cache pruned successfully.');
