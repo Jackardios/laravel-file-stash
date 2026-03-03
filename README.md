@@ -25,7 +25,7 @@ File Stash gives every worker a safe, shared file cache with proper locking:
 Worker A ──fetch──► image.jpg ──LOCK_EX──► /cache/abc123 ──unlock──► done
 Worker B ────────── (waits) ──────────────LOCK_SH──► read ──► done
 Worker C ────────── (waits) ──────────────LOCK_SH──► read ──► done
-Pruner   ────────── (waits for all readers) ────────────────► prune
+Pruner   ────────── (skips locked files) ────────────────────► prune
 ```
 
 **One download. Shared reads. No corruption. No race conditions.**
@@ -37,7 +37,7 @@ Pruner   ────────── (waits for all readers) ─────�
 File Stash helps when your application needs to **download a file and process it locally** — not just move it between storages, but actually do something with the bytes:
 
 - **Image processing pipelines** — resize, watermark, or convert images from S3/CDN across multiple queue workers
-- **PDF/document generation** — compose reports from template files stored remotely
+- **PDF processing** — extract text, merge, or convert documents from cloud storage
 - **ML/AI workers** — load model weights or input data from cloud storage, process locally
 - **Video/audio processing** — extract thumbnails, transcode, analyze media files
 - **Data import jobs** — parse CSV/Excel files from external sources in parallel workers
@@ -50,27 +50,27 @@ In all these cases, `Storage::get()` returns file contents as a string (loaded i
 ## How It Works
 
 ```
-                          ┌──────────────────────────────┐
+                          ┌───────────────────────────────┐
                           │        File Stash Cache       │
                           │   /storage/cache/files/       │
                           │                               │
-  ┌─────────────┐  get()  │  ┌────────┐   File exists?   │
+  ┌─────────────┐  get()  │  ┌─────────┐   File exists?   │
   │  Worker 1   │────────►│  │ SHA-256 │──── yes ──► LOCK_SH ──► read ──► callback
   └─────────────┘         │  │  hash   │                  │
   ┌─────────────┐  get()  │  │         │──── no ───► fetch ──► LOCK_EX ──► write
-  │  Worker 2   │────────►│  └────────┘              │    │
+  │  Worker 2   │────────►│  └─────────┘             │    │
   └─────────────┘         │                          │    │
   ┌─────────────┐  get()  │     Sources:             │    │
   │  Worker 3   │────────►│     • https://...   ◄────┘    │
   └─────────────┘         │     • s3://...                │
                           │     • local://...             │
   ┌─────────────┐ prune() │                               │
-  │  Scheduler  │────────►│  Lifecycle lock prevents      │
-  └─────────────┘         │  pruning during batch ops     │
-                          └──────────────────────────────┘
+  │  Scheduler  │────────►│  File-level locks prevent     │
+  └─────────────┘         │  deletion of files in use     │
+                          └───────────────────────────────┘
 ```
 
-Each file is identified by a SHA-256 hash of its URL. The first worker to request a file fetches and caches it; subsequent workers read the cached copy through a shared lock. Pruning and batch operations coordinate via lifecycle locks so files are never deleted while in use.
+Each file is identified by a SHA-256 hash of its URL. The first worker to request a file fetches and caches it; subsequent workers read the cached copy through a shared lock. File-level locks prevent pruning of files that are currently in use, and lifecycle locks coordinate destructive operations like `clear()`.
 
 ---
 
@@ -114,29 +114,34 @@ FileStash::get($file, function ($file, $cachedPath) {
 Any configured disk works — S3, GCS, SFTP, local. The prefix before `://` is the disk name from `config/filesystems.php`:
 
 ```php
-// "photos" is the disk name from config/filesystems.php
-$file = new GenericFile('photos://uploads/2024/photo.jpg');
+// "reports" is the disk name from config/filesystems.php
+$file = new GenericFile('reports://exports/sales-2024.xlsx');
 
 FileStash::get($file, function ($file, $path) {
-    // Work with the local cached copy instead of streaming from S3
-    $hash = md5_file($path);
+    // $path is a local file — pass it to any library that needs a file path
+    $spreadsheet = IOFactory::load($path);
+    $data = $spreadsheet->getActiveSheet()->toArray();
+    // Process $data...
 });
 ```
 
-> **Note:** `photos://` refers to a Laravel disk named `photos`, not a URL protocol. Configure your disks in `config/filesystems.php`.
+> **Note:** `reports://` refers to a Laravel disk named `reports`, not a URL protocol. Configure your disks in `config/filesystems.php`.
 
 ### Batch processing
 
-Process multiple files atomically — the lifecycle lock guarantees no file is pruned while you work:
+Process multiple files — each is held with a shared lock so nothing gets pruned or corrupted during the callback:
 
 ```php
-$files = collect($urls)->map(fn ($url) => new GenericFile($url))->all();
+$attachments = Attachment::where('report_id', $reportId)->get();
+
+$files = $attachments->map(
+    fn ($a) => new GenericFile($a->storage_url)
+)->all();
 
 FileStash::batch($files, function ($files, $paths) {
-    // All files are guaranteed to exist until this callback returns.
-    // Safe to do multi-file operations: ZIP, PDF merge, comparison, etc.
+    // All files are locked for reading — safe from pruning and deletion
     $zip = new ZipArchive();
-    $zip->open(storage_path('export.zip'), ZipArchive::CREATE);
+    $zip->open(storage_path('app/export.zip'), ZipArchive::CREATE);
     foreach ($paths as $i => $path) {
         $zip->addFile($path, basename($files[$i]->getUrl()));
     }
@@ -149,12 +154,13 @@ FileStash::batch($files, function ($files, $paths) {
 Use `getOnce()` when you only need the file temporarily — it's deleted from cache after the callback:
 
 ```php
-$file = new GenericFile('https://example.com/invoices/INV-2024-001.pdf');
+$invoice = new GenericFile('https://billing.example.com/invoices/INV-2024-001.pdf');
 
-FileStash::getOnce($file, function ($file, $path) {
-    return Mail::to($user)->send(new InvoiceMail($path));
+FileStash::getOnce($invoice, function ($file, $path) {
+    // Send email with attachment, then discard the cached file
+    Mail::to('user@example.com')->send(new InvoiceMail($path));
 });
-// Cached file is automatically removed
+// Cached file is automatically removed from disk
 ```
 
 ---
@@ -234,11 +240,13 @@ If two workers request the same uncached file, one acquires the exclusive lock a
 ### Batch + prune — safe
 
 ```
-Worker  ─── batch([a, b, c]) ──► lifecycle lock (shared) ──► process ──► unlock
-Pruner  ─── prune()           ──► waits for lifecycle lock ─────────────► prune
+Worker  ─── batch([a, b, c]) ──► LOCK_SH on each file ──► callback ──► unlock
+Pruner  ─── prune()          ──► tries LOCK_EX on file ──► skipped (file is busy)
 ```
 
-Batch operations hold a shared lifecycle lock. The pruner acquires an exclusive lifecycle lock, so it waits until all batch operations complete before deleting anything.
+While your callback runs, each cached file is held with a shared lock (`LOCK_SH`). The pruner tries to acquire an exclusive lock (`LOCK_EX`) before deleting — if it can't, it skips the file. Your files are safe for the entire duration of the callback.
+
+`clear()` goes further — it acquires an exclusive lifecycle lock, so it waits until all `batch()`/`get()` operations finish before deleting anything.
 
 ### Lock configuration
 
@@ -246,7 +254,7 @@ Batch operations hold a shared lifecycle lock. The pruner acquires an exclusive 
 // config/file-stash.php
 'lock_max_attempts'      => 3,    // retries before giving up
 'lock_wait_timeout'      => -1,   // seconds to wait (-1 = forever)
-'lifecycle_lock_timeout' => 30,   // seconds for batch/prune coordination
+'lifecycle_lock_timeout' => 30,   // seconds for batch/clear coordination
 ```
 
 For strict latency requirements, throw instead of waiting:
@@ -450,7 +458,7 @@ FILE_STASH_ALLOWED_HOSTS=example.com,*.cdn.example.com
 |---|---|---|---|
 | `lock_max_attempts` | `FILE_STASH_LOCK_MAX_ATTEMPTS` | `3` | Lock acquisition retries |
 | `lock_wait_timeout` | `FILE_STASH_LOCK_WAIT_TIMEOUT` | `-1` (forever) | Lock wait timeout (seconds) |
-| `lifecycle_lock_timeout` | `FILE_STASH_LIFECYCLE_LOCK_TIMEOUT` | `30` | Batch/prune coordination timeout |
+| `lifecycle_lock_timeout` | `FILE_STASH_LIFECYCLE_LOCK_TIMEOUT` | `30` | Batch/clear coordination timeout |
 | `batch_chunk_size` | `FILE_STASH_BATCH_CHUNK_SIZE` | `100` | Files per chunk (prevents fd exhaustion) |
 
 ### Pruning
