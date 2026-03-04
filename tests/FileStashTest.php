@@ -659,6 +659,10 @@ class FileStashTest extends TestCase
             'plus sign not encoded' => ['http://example.com/path+plus/file+name.jpg', 'http://example.com/path+plus/file+name.jpg'],
             'mixed chars' => ['http://example.com/path with space/and+plus.jpg', 'http://example.com/path%20with%20space/and+plus.jpg'],
             'query string spaces encoded' => ['http://example.com/pa th?q=a+b c', 'http://example.com/pa%20th?q=a+b%20c'],
+            'user only' => ['http://admin@example.com/path', 'http://admin@example.com/path'],
+            'user and pass' => ['http://admin:secret@example.com/path', 'http://admin:secret@example.com/path'],
+            'user with spaces' => ['http://my user@example.com/path', 'http://my%20user@example.com/path'],
+            'user pass and port' => ['http://admin:se cret@example.com:8080/path', 'http://admin:se%20cret@example.com:8080/path'],
         ];
     }
 
@@ -857,12 +861,14 @@ class FileStashTest extends TestCase
 
     public function testBatchChunking()
     {
-        $this->app['files']->put("{$this->diskPath}/test-image.jpg", 'abc');
+        // Create 5 different files on disk
+        for ($i = 0; $i < 5; $i++) {
+            $this->app['files']->put("{$this->diskPath}/chunk-file-{$i}.txt", "content-{$i}");
+        }
 
-        // Create 5 files but set chunk size to 2
         $files = [];
         for ($i = 0; $i < 5; $i++) {
-            $files[] = new GenericFile('test://test-image.jpg');
+            $files[] = new GenericFile("test://chunk-file-{$i}.txt");
         }
 
         $cache = new FileStash([
@@ -875,11 +881,14 @@ class FileStashTest extends TestCase
             $callbackCalled = true;
             $this->assertCount(5, $receivedFiles);
             $this->assertCount(5, $receivedPaths);
+            // All paths should be unique (different files → different cache paths)
+            $this->assertCount(5, array_unique($receivedPaths));
             return $receivedPaths;
         });
 
         $this->assertTrue($callbackCalled);
         $this->assertCount(5, $paths);
+        $this->assertCount(5, array_unique($paths));
     }
 
     public function testBatchChunkingDisabled()
@@ -1807,13 +1816,10 @@ class FileStashTest extends TestCase
 
         // Pre-populate cache
         copy(__DIR__.'/files/test-image.jpg', $cachedPath);
-        // Set atime to now (within 300s interval)
-        touch($cachedPath);
+        // Set atime to 5 seconds ago (still within 300s touch_interval)
+        touch($cachedPath, time(), time() - 5);
         clearstatcache();
         $atimeBefore = fileatime($cachedPath);
-
-        // Sleep briefly to ensure we'd see a time difference if touch happened
-        usleep(1100000); // 1.1 seconds
 
         $cache->get($file, $this->noop);
 
@@ -2010,5 +2016,73 @@ class FileStashTest extends TestCase
         $metrics = $fake->metrics();
         $this->assertInstanceOf(CacheMetrics::class, $metrics);
         $this->assertEquals(0, $metrics->hits);
+    }
+
+    // =========================================================================
+    // getDiskFile — null readStream
+    // =========================================================================
+
+    public function testGetDiskFileThrowsWhenReadStreamReturnsNull()
+    {
+        $filesystemMock = $this->createMock(FilesystemAdapter::class);
+        $filesystemMock->method('readStream')->willReturn(null);
+        $filesystemMock->method('getDriver')->willReturn($filesystemMock);
+        $filesystemMock->method('get')->willReturn($filesystemMock);
+
+        $filesystemManagerMock = $this->createMock(FilesystemManager::class);
+        $filesystemManagerMock->method('disk')->with('s3')->willReturn($filesystemMock);
+
+        $cache = new FileStash(
+            ['path' => $this->cachePath],
+            null,
+            null,
+            $filesystemManagerMock
+        );
+
+        $file = new GenericFile('s3://some/missing-file.jpg');
+
+        $this->expectException(\Illuminate\Contracts\Filesystem\FileNotFoundException::class);
+        $this->expectExceptionMessage('Could not open file stream');
+
+        $cache->get($file, $this->noop);
+    }
+
+    // =========================================================================
+    // makeHttpClient — timeout configuration
+    // =========================================================================
+
+    public function testGuzzleClientHasTimeoutSettings()
+    {
+        $cache = $this->createCache([
+            'timeout' => 30,
+            'connect_timeout' => 10,
+            'read_timeout' => 15,
+        ]);
+        $reflection = new \ReflectionProperty($cache, 'client');
+        $reflection->setAccessible(true);
+        $client = $reflection->getValue($cache);
+
+        $config = $client->getConfig();
+        $this->assertEquals(30, $config['timeout']);
+        $this->assertEquals(10, $config['connect_timeout']);
+        $this->assertEquals(15, $config['read_timeout']);
+        $this->assertFalse($config['http_errors']);
+    }
+
+    public function testGuzzleClientClampsNegativeTimeoutsToZero()
+    {
+        $cache = $this->createCache([
+            'timeout' => -1,
+            'connect_timeout' => -1,
+            'read_timeout' => -1,
+        ]);
+        $reflection = new \ReflectionProperty($cache, 'client');
+        $reflection->setAccessible(true);
+        $client = $reflection->getValue($cache);
+
+        $config = $client->getConfig();
+        $this->assertEquals(0, $config['timeout']);
+        $this->assertEquals(0, $config['connect_timeout']);
+        $this->assertEquals(0, $config['read_timeout']);
     }
 }

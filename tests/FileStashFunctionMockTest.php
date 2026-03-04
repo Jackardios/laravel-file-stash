@@ -279,8 +279,8 @@ class FileStashFunctionMockTest extends TestCase
 
         $cache = $this->createCacheWithMockFixtures();
 
-        // Simulate: Another process started recording and set LOCK_EX
-        $this->assertTrue(touch($cachedPath), "Failed to create cache file for locking.");
+        // Simulate: Another process already wrote the file and holds LOCK_EX
+        copy(__DIR__.'/files/test-file.txt', $cachedPath);
         $writingProcessHandle = fopen($cachedPath, 'rb+');
         $this->assertIsResource($writingProcessHandle, "Failed to open handle for writing process simulation.");
         $this->assertTrue(flock($writingProcessHandle, LOCK_EX), "Failed to acquire LOCK_EX for writing simulation.");
@@ -325,6 +325,8 @@ class FileStashFunctionMockTest extends TestCase
         $this->assertFileExists($cachedPath);
         $this->assertGreaterThanOrEqual($maxAttemptsBeforeSuccess, $lockAttempt);
         $this->assertGreaterThan(0, filesize($cachedPath));
+        // Verify the file was read from cache, not re-downloaded
+        $this->assertStringEqualsFile($cachedPath, file_get_contents(__DIR__.'/files/test-file.txt'));
 
         if (is_resource($writingProcessHandle)) {
             \flock($writingProcessHandle, LOCK_UN);
@@ -486,7 +488,10 @@ class FileStashFunctionMockTest extends TestCase
             'prune_timeout' => 1, // 1 second timeout
         ], null, $this->files, $filesystemManagerMock);
 
-        $cache->prune();
+        $stats = $cache->prune();
+
+        // Prune should report incomplete due to timeout
+        $this->assertFalse($stats['completed']);
 
         // Some files should still exist due to timeout
         $remainingFiles = glob("{$this->cachePath}/file_*");
