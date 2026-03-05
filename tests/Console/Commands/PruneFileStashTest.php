@@ -2,7 +2,7 @@
 
 namespace Jackardios\FileStash\Tests\Console\Commands;
 
-use Jackardios\FileStash\FileStash;
+use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
 use Jackardios\FileStash\Console\Commands\PruneFileStash;
 use Jackardios\FileStash\Tests\TestCase;
 
@@ -10,7 +10,7 @@ class PruneFileStashTest extends TestCase
 {
     public function testPruneSuccessOutput()
     {
-        $mock = $this->createMock(FileStash::class);
+        $mock = $this->createMock(FileStashContract::class);
         $mock->method('prune')->willReturn([
             'completed' => true,
             'deleted' => 3,
@@ -18,7 +18,7 @@ class PruneFileStashTest extends TestCase
             'total_size' => 2048,
         ]);
 
-        $this->app->instance(FileStash::class, $mock);
+        $this->app->instance('file-stash', $mock);
 
         $this->artisan('prune-file-stash')
             ->expectsOutput('File cache pruned successfully.')
@@ -29,7 +29,7 @@ class PruneFileStashTest extends TestCase
 
     public function testPruneTimeoutOutput()
     {
-        $mock = $this->createMock(FileStash::class);
+        $mock = $this->createMock(FileStashContract::class);
         $mock->method('prune')->willReturn([
             'completed' => false,
             'deleted' => 1,
@@ -37,7 +37,7 @@ class PruneFileStashTest extends TestCase
             'total_size' => 4096,
         ]);
 
-        $this->app->instance(FileStash::class, $mock);
+        $this->app->instance('file-stash', $mock);
 
         $this->artisan('prune-file-stash')
             ->expectsOutput('Prune operation did not complete (timed out).')
@@ -47,7 +47,7 @@ class PruneFileStashTest extends TestCase
 
     public function testPruneSilentSuppressesOutput()
     {
-        $mock = $this->createMock(FileStash::class);
+        $mock = $this->createMock(FileStashContract::class);
         $mock->method('prune')->willReturn([
             'completed' => true,
             'deleted' => 2,
@@ -55,7 +55,7 @@ class PruneFileStashTest extends TestCase
             'total_size' => 1024,
         ]);
 
-        $this->app->instance(FileStash::class, $mock);
+        $this->app->instance('file-stash', $mock);
 
         $this->artisan('prune-file-stash --silent')
             ->doesntExpectOutput('File cache pruned successfully.')

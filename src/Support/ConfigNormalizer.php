@@ -133,7 +133,7 @@ final class ConfigNormalizer
      */
     private static function validate(array $config): void
     {
-        if ($config['max_file_size'] < -1) {
+        if ($config['max_file_size'] < -1 || $config['max_file_size'] === 0) {
             throw InvalidConfigurationException::create('max_file_size', 'must be -1 (unlimited) or a positive number');
         }
 

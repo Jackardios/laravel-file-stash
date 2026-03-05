@@ -2,7 +2,7 @@
 
 namespace Jackardios\FileStash\Console\Commands;
 
-use Jackardios\FileStash\FileStash;
+use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
 use Illuminate\Console\Command;
 
 class PruneFileStash extends Command
@@ -24,7 +24,7 @@ class PruneFileStash extends Command
     /**
      * Execute the console command.
      */
-    public function handle(FileStash $cache): int
+    public function handle(FileStashContract $cache): int
     {
         $stats = $cache->prune();
 

@@ -770,7 +770,7 @@ class FileStash implements FileStashContract
         array $context = []
     ): void {
         $this->logger->warning("HTTP {$method} request failed, retrying ({$attempt}/{$maxRetries})", [
-            'url' => $file->getUrl(),
+            'url' => $this->sanitizeUrlForLogging($file->getUrl()),
             ...$context,
         ]);
 
@@ -942,7 +942,7 @@ class FileStash implements FileStashContract
                     $this->dispatcher->dispatch(new CacheFileEvicted($filePath, $evictionReason));
                 }
             }
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             return false;
         } finally {
             if (is_resource($fileStream)) {
@@ -1053,8 +1053,12 @@ class FileStash implements FileStashContract
      */
     protected function acquireSharedReadLock($cachedFileStream, bool $throwOnLock): bool
     {
-        if ($throwOnLock && !flock($cachedFileStream, LOCK_SH | LOCK_NB)) {
-            throw FileLockedException::create();
+        if ($throwOnLock) {
+            if (!flock($cachedFileStream, LOCK_SH | LOCK_NB)) {
+                throw FileLockedException::create();
+            }
+
+            return true;
         }
 
         $lockAcquired = false;
@@ -1575,6 +1579,38 @@ class FileStash implements FileStashContract
     }
 
     /**
+     * Remove userinfo (credentials) from a URL for safe logging.
+     */
+    protected function sanitizeUrlForLogging(string $url): string
+    {
+        $parts = parse_url($url);
+        if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
+            return $url;
+        }
+
+        $sanitized = $parts['scheme'] . '://';
+        if (isset($parts['user'])) {
+            $sanitized .= '***';
+            if (isset($parts['pass'])) {
+                $sanitized .= ':***';
+            }
+            $sanitized .= '@';
+        }
+        $sanitized .= $parts['host'];
+        if (isset($parts['port'])) {
+            $sanitized .= ':' . $parts['port'];
+        }
+        $sanitized .= $parts['path'] ?? '';
+        if (isset($parts['query'])) {
+            $sanitized .= '?' . $parts['query'];
+        }
+        if (isset($parts['fragment'])) {
+            $sanitized .= '#' . $parts['fragment'];
+        }
+        return $sanitized;
+    }
+
+    /**
      * Validate that a URL's host is in the allowed hosts list.
      *
      * @throws HostNotAllowedException
@@ -1583,7 +1619,7 @@ class FileStash implements FileStashContract
     {
         $allowedHosts = $this->config['allowed_hosts'];
 
-        if ($allowedHosts === null || (is_array($allowedHosts) && empty($allowedHosts))) {
+        if ($allowedHosts === null) {
             return;
         }
 
@@ -1651,6 +1687,13 @@ class FileStash implements FileStashContract
             ],
             'allow_redirects' => [
                 'max' => $this->config['max_redirects'],
+                'on_redirect' => function (
+                    \Psr\Http\Message\RequestInterface $request,
+                    ResponseInterface $response,
+                    \Psr\Http\Message\UriInterface $uri
+                ) {
+                    $this->validateHost((string) $uri);
+                },
             ],
         ]);
     }

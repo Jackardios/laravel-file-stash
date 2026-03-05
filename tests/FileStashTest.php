@@ -1120,18 +1120,18 @@ class FileStashTest extends TestCase
         $method->invoke($cache, 'https://evil.com/image.jpg');
     }
 
-    public function testAllowedHostsEmptyAllowsAll()
+    public function testAllowedHostsEmptyDeniesAll()
     {
         $cache = new FileStash([
             'path' => $this->cachePath,
-            'allowed_hosts' => [], // Empty array should allow all
+            'allowed_hosts' => [], // Empty array should deny all
         ]);
 
         $method = new ReflectionMethod(FileStash::class, 'validateHost');
         $method->setAccessible(true);
 
-        // Should allow any host when allowed_hosts is empty
-        $this->assertNull($method->invoke($cache, 'https://any-domain.com/image.jpg'));
+        $this->expectException(HostNotAllowedException::class);
+        $method->invoke($cache, 'https://any-domain.com/image.jpg');
     }
 
     public function testLifecycleLockPathUsesNormalizedCachePath()
@@ -1532,6 +1532,8 @@ class FileStashTest extends TestCase
         $config = $client->getConfig();
         $this->assertArrayHasKey('allow_redirects', $config);
         $this->assertEquals(3, $config['allow_redirects']['max']);
+        $this->assertArrayHasKey('on_redirect', $config['allow_redirects']);
+        $this->assertIsCallable($config['allow_redirects']['on_redirect']);
     }
 
     public function testAllowedHostsEmptyStringAllowsAllHosts()
@@ -2084,5 +2086,99 @@ class FileStashTest extends TestCase
         $this->assertEquals(0, $config['timeout']);
         $this->assertEquals(0, $config['connect_timeout']);
         $this->assertEquals(0, $config['read_timeout']);
+    }
+
+    // =========================================================================
+    // SSRF Redirect Protection Tests
+    // =========================================================================
+
+    public function testOnRedirectBlocksDisallowedHost()
+    {
+        $cache = $this->createCache(['allowed_hosts' => ['example.com']]);
+        $reflection = new \ReflectionProperty($cache, 'client');
+        $reflection->setAccessible(true);
+        $client = $reflection->getValue($cache);
+
+        $config = $client->getConfig();
+        $onRedirect = $config['allow_redirects']['on_redirect'];
+
+        $request = $this->createMock(\Psr\Http\Message\RequestInterface::class);
+        $response = $this->createMock(\Psr\Http\Message\ResponseInterface::class);
+        $uri = $this->createMock(\Psr\Http\Message\UriInterface::class);
+        $uri->method('__toString')->willReturn('https://evil.com/malicious');
+
+        $this->expectException(HostNotAllowedException::class);
+        $onRedirect($request, $response, $uri);
+    }
+
+    public function testOnRedirectAllowsAllowedHost()
+    {
+        $cache = $this->createCache(['allowed_hosts' => ['example.com']]);
+        $reflection = new \ReflectionProperty($cache, 'client');
+        $reflection->setAccessible(true);
+        $client = $reflection->getValue($cache);
+
+        $config = $client->getConfig();
+        $onRedirect = $config['allow_redirects']['on_redirect'];
+
+        $request = $this->createMock(\Psr\Http\Message\RequestInterface::class);
+        $response = $this->createMock(\Psr\Http\Message\ResponseInterface::class);
+        $uri = $this->createMock(\Psr\Http\Message\UriInterface::class);
+        $uri->method('__toString')->willReturn('https://example.com/redirect-target');
+
+        // Should not throw
+        $onRedirect($request, $response, $uri);
+        $this->assertTrue(true);
+    }
+
+    // =========================================================================
+    // URL Sanitization Tests
+    // =========================================================================
+
+    public function testSanitizeUrlForLogging()
+    {
+        $cache = $this->createCache();
+        $method = new ReflectionMethod(FileStash::class, 'sanitizeUrlForLogging');
+        $method->setAccessible(true);
+
+        // URL without credentials - unchanged
+        $this->assertEquals(
+            'https://example.com/path',
+            $method->invoke($cache, 'https://example.com/path')
+        );
+
+        // URL with user only
+        $this->assertEquals(
+            'https://***@example.com/path',
+            $method->invoke($cache, 'https://user@example.com/path')
+        );
+
+        // URL with user and password
+        $this->assertEquals(
+            'https://***:***@example.com/path',
+            $method->invoke($cache, 'https://user:pass@example.com/path')
+        );
+
+        // Invalid URL - returned as-is
+        $this->assertEquals(
+            'not-a-url',
+            $method->invoke($cache, 'not-a-url')
+        );
+
+        // URL with port
+        $this->assertEquals(
+            'https://***:***@example.com:8080/path',
+            $method->invoke($cache, 'https://user:pass@example.com:8080/path')
+        );
+    }
+
+    // =========================================================================
+    // Config Validation Tests
+    // =========================================================================
+
+    public function testConfigValidationThrowsOnZeroMaxFileSize()
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        new FileStash(['path' => $this->cachePath, 'max_file_size' => 0]);
     }
 }

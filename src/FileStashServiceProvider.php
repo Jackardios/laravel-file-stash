@@ -49,19 +49,6 @@ class FileStashServiceProvider extends ServiceProvider
     }
 
     /**
-     * Get the services provided by the provider.
-     *
-     * @return array<int, string>
-     */
-    public function provides(): array
-    {
-        return [
-            'file-stash',
-            'command.file-stash.prune',
-        ];
-    }
-
-    /**
      * Register the scheduled command to prune the file cache.
      */
     public function registerScheduledPruneCommand(): void
