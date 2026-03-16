@@ -14,6 +14,7 @@ You have queue workers processing jobs that need the same files — images, docu
 Worker A ──fetch──► image.jpg ──write──► /cache/abc123   ✗ corrupt
 Worker B ──fetch──► image.jpg ──write──► /cache/abc123   ✗ overwrite
 Worker C ──────────read───────────────► /cache/abc123   ✗ partial data
+
 Pruner   ──────────delete─────────────► /cache/abc123   ✗ gone mid-read
 ```
 
@@ -25,6 +26,7 @@ File Stash gives every worker a safe, shared file cache with proper locking:
 Worker A ──fetch──► image.jpg ──LOCK_EX──► /cache/abc123 ──unlock──► done
 Worker B ────────── (waits) ──────────────LOCK_SH──► read ──► done
 Worker C ────────── (waits) ──────────────LOCK_SH──► read ──► done
+
 Pruner   ────────── (skips locked files) ────────────────────► prune
 ```
 
