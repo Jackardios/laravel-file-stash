@@ -15,7 +15,8 @@ class GenericFile implements File
     /**
      * Create a new instance.
      *
-     * @param string $url The file URL (http://, https://, or diskname://)
+     * @param  string  $url  The file URL (http://, https://, or diskname://)
+     *
      * @throws InvalidArgumentException If URL is empty or has invalid format
      */
     public function __construct(string $url)
@@ -26,8 +27,13 @@ class GenericFile implements File
             throw new InvalidArgumentException('File URL cannot be empty');
         }
 
-        if (!str_contains($url, '://')) {
+        if (! str_contains($url, '://')) {
             throw new InvalidArgumentException('File URL must contain a protocol (e.g., http://, https://, or diskname://)');
+        }
+
+        [$scheme, $path] = explode('://', $url, 2);
+        if ($scheme === '' || $path === '') {
+            throw new InvalidArgumentException("File URL must have a non-empty protocol and path: '{$url}'");
         }
 
         $this->url = $url;

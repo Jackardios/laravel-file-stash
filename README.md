@@ -57,9 +57,9 @@ In all these cases, `Storage::get()` returns file contents as a string (loaded i
                           │   /storage/cache/files/       │
                           │                               │
   ┌─────────────┐  get()  │  ┌─────────┐   File exists?   │
-  │  Worker 1   │────────►│  │ SHA-256 │──── yes ──► LOCK_SH ──► read ──► callback
+  │  Worker 1   │────────►│  │ SHA-256 │─ yes ► LOCK_SH ──► read ──► callback
   └─────────────┘         │  │  hash   │                  │
-  ┌─────────────┐  get()  │  │         │──── no ───► fetch ──► LOCK_EX ──► write
+  ┌─────────────┐  get()  │  │         │─ no ─► claim ──► fetch ──► .tmp ──► rename
   │  Worker 2   │────────►│  └─────────┘             │    │
   └─────────────┘         │                          │    │
   ┌─────────────┐  get()  │     Sources:             │    │
@@ -72,7 +72,7 @@ In all these cases, `Storage::get()` returns file contents as a string (loaded i
                           └───────────────────────────────┘
 ```
 
-Each file is identified by a SHA-256 hash of its URL. The first worker to request a file fetches and caches it; subsequent workers read the cached copy through a shared lock. File-level locks prevent pruning of files that are currently in use, and lifecycle locks coordinate destructive operations like `clear()`.
+Each file is identified by a SHA-256 hash of its URL. On a cache miss the worker takes a per-file *claim lock* (so concurrent workers never download the same URL twice), streams the download into an exclusively locked temp file, and publishes it with an atomic `rename()`. Readers open the published file under a shared lock — they can never observe a partially written file. File-level locks prevent pruning of files that are currently in use, and lifecycle locks coordinate destructive operations like `clear()`. If a writer crashes mid-download, the kernel releases its locks and the next worker simply takes over; orphaned temp files are garbage-collected by `prune()`.
 
 ---
 
@@ -90,7 +90,7 @@ Publish the config (optional):
 php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProvider" --tag="config"
 ```
 
-**Requirements:** PHP ^8.1, Laravel ^10 / ^11 / ^12
+**Requirements:** PHP ^8.2, Laravel ^11 / ^12 / ^13
 
 ---
 
@@ -165,6 +165,8 @@ FileStash::getOnce($invoice, function ($file, $path) {
 // Cached file is automatically removed from disk
 ```
 
+> **Note:** the cache entry is shared by URL across all workers. `getOnce()`/`batchOnce()` delete that shared entry after the callback — if other workers use `get()` on the same URL, you are evicting their warm cache and forcing a re-download. Deletion is skipped for files another worker is actively reading at that moment.
+
 ---
 
 ## Custom File Implementations
@@ -230,25 +232,34 @@ Worker C ─── get("img.jpg") ──► LOCK_SH ──► read ──► unl
 
 Multiple workers can read the same cached file simultaneously. Shared locks (`LOCK_SH`) do not block each other.
 
-### Write during reads — safe
+### Concurrent writes — safe
 
 ```
-Worker A ─── get("new.jpg") ──► cache miss ──► LOCK_EX ──► download + write ──► unlock
-Worker B ─── get("new.jpg") ──► cache miss ──► waits... ──────────────────────► LOCK_SH ──► read
+Worker A ─── get("new.jpg") ──► miss ──► claim ──► download ──► .tmp ──► rename ──► LOCK_SH ──► read
+Worker B ─── get("new.jpg") ──► miss ──► waits on claim ──────────────────────────► LOCK_SH ──► read
 ```
 
-If two workers request the same uncached file, one acquires the exclusive lock and fetches; the other waits, then reads the cached result.
+If two workers request the same uncached file, one acquires the claim lock and downloads; the other waits on the claim, then reads the published result. The download streams into a temp file (`{hash}.{pid}.{random}.tmp`) that is exclusively locked for its whole lifetime and published with an atomic `rename()` — a reader can never open a partially written file. If the writer crashes, the kernel releases the claim and the waiting worker downloads the file itself.
 
-### Batch + prune — safe
+### Batch + prune
 
 ```
 Worker  ─── batch([a, b, c]) ──► LOCK_SH on each file ──► callback ──► unlock
 Pruner  ─── prune()          ──► tries LOCK_EX on file ──► skipped (file is busy)
 ```
 
-While your callback runs, each cached file is held with a shared lock (`LOCK_SH`). The pruner tries to acquire an exclusive lock (`LOCK_EX`) before deleting — if it can't, it skips the file. Your files are safe for the entire duration of the callback.
+While your callback runs, each cached file is held with a shared lock (`LOCK_SH`). The pruner tries to acquire an exclusive lock (`LOCK_EX`) before deleting — if it can't, it skips the file.
+
+> **Chunked batches are weaker.** When a batch contains more files than `batch_chunk_size` (default 100), files are retrieved chunk by chunk and their shared locks are **released before your callback runs** (this prevents file descriptor exhaustion). During the callback, `forget()`, `clear()`, and `getOnce()`/`batchOnce()` cleanup from other workers are still excluded by the lifecycle lock — but a concurrent `prune()` may evict entries whose age or total-size limits are exceeded. If your callback needs every path to stay valid for its whole duration, set `batch_chunk_size => -1` (no chunking) or keep batches at or below the chunk size.
 
 `clear()` goes further — it acquires an exclusive lifecycle lock, so it waits until all `batch()`/`get()` operations finish before deleting anything.
+
+### Nested calls
+
+Cache calls may be nested (e.g. `get()` inside a `batch()` callback) — the lifecycle lock is reentrant within a process. Two rules apply:
+
+- `forget()`, `getOnce()`, or `batchOnce()` inside a `batch()`/`batchOnce()` callback: the deletion cannot upgrade the shared lifecycle lock to an exclusive one, so it is **deferred** — the entry stays on disk for the whole callback and is deleted under a real exclusive lifecycle lock right after the outermost batch releases its shared lock. `forget()` returns `true` in that case, meaning "scheduled for deletion". Note the flush happens once per outermost batch: if a later chunk of the same batch re-downloads a forgotten entry, the flush removes the fresh copy too.
+- `clear()` inside a `batch()`/`batchOnce()` callback throws a `LogicException` immediately instead of deadlocking.
 
 ### Lock configuration
 
@@ -294,8 +305,8 @@ FileStash::batchOnce(array $files, ?callable $callback, bool $throwOnLock = fals
 ### Cache Management
 
 ```php
-FileStash::exists(File $file): bool          // Check if a file's source exists
-FileStash::forget(File $file): bool          // Remove a specific cached file
+FileStash::exists(File $file): bool          // Check if a file exists at its SOURCE (not in the cache)
+FileStash::forget(File $file): bool          // Remove a cached file (inside a batch callback: schedules the deletion; see Nested calls)
 FileStash::prune(): array                     // Remove expired/oversized files
 FileStash::clear(): void                      // Delete all unused cached files
 FileStash::metrics(): CacheMetrics            // Get hit/miss/eviction counters
@@ -313,7 +324,7 @@ The service provider registers a scheduled command that runs automatically. By d
 
 ```php
 // config/file-stash.php
-'prune_interval' => '*/5 * * * *',
+'prune_interval' => '*/5 * * * *',   // set to null to disable scheduled pruning
 ```
 
 Make sure Laravel's scheduler is running:
@@ -327,8 +338,10 @@ Make sure Laravel's scheduler is running:
 Run the artisan command:
 
 ```bash
-php artisan prune-file-stash
+php artisan file-stash:prune
 ```
+
+(The old `prune-file-stash` name still works as a deprecated alias and will be removed in v6.)
 
 Or call it programmatically:
 
@@ -341,7 +354,7 @@ $stats = FileStash::prune();
 
 ```php
 FileStash::clear();           // Delete all unused cached files
-FileStash::forget($file);     // Remove a specific file
+FileStash::forget($file);     // Remove a specific file (true = deleted or scheduled)
 ```
 
 The cache is also cleared automatically when you run `php artisan cache:clear`.
@@ -360,7 +373,7 @@ Enable event dispatching for observability:
 | Event | When | Key properties |
 |---|---|---|
 | `CacheHit` | File served from cache | `$file`, `$cachedPath` |
-| `CacheMiss` | File not cached, fetching | `$file`, `$url` |
+| `CacheMiss` | File not cached, fetching | `$file` |
 | `CacheFileRetrieved` | File successfully cached | `$file`, `$cachedPath`, `$bytes`, `$source` |
 | `CacheFileEvicted` | File deleted from cache | `$path`, `$reason` |
 | `CachePruneCompleted` | Prune finished | `$deleted`, `$remaining`, `$totalSize`, `$completed` |
@@ -429,23 +442,34 @@ php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProv
 
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `timeout` | `FILE_STASH_TIMEOUT` | `-1` | Total request timeout (seconds) |
+| `timeout` | `FILE_STASH_TIMEOUT` | `300` | Total request timeout (seconds, `-1` = unlimited) |
 | `connect_timeout` | `FILE_STASH_CONNECT_TIMEOUT` | `30` | Connection timeout (seconds) |
-| `read_timeout` | `FILE_STASH_READ_TIMEOUT` | `30` | Stream read timeout (seconds) |
+| `read_timeout` | `FILE_STASH_READ_TIMEOUT` | `30` | Stall timeout (seconds, see below) |
 | `http_retries` | `FILE_STASH_HTTP_RETRIES` | `0` | Retry attempts (4xx except 429 not retried) |
 | `http_retry_delay` | `FILE_STASH_HTTP_RETRY_DELAY` | `100` | Base delay in ms (exponential backoff) |
-| `user_agent` | `FILE_STASH_USER_AGENT` | `Laravel-FileStash/4.x` | User-Agent header |
+| `user_agent` | `FILE_STASH_USER_AGENT` | `Laravel-FileStash/5.x` | User-Agent header |
 | `max_redirects` | `FILE_STASH_MAX_REDIRECTS` | `5` | Max redirects to follow |
+
+**How `read_timeout` works:** for HTTP(S) sources it maps to curl's low-speed abort — the transfer fails when it stalls below 1 byte/s for `read_timeout` seconds (rounded up to whole seconds). HTTP timeouts surface as Guzzle exceptions (`ConnectException`/`RequestException`), which participate in `http_retries`. For storage-disk streams it is applied via `stream_set_timeout()` and a stalled read throws `SourceResourceTimedOutException`.
 
 ### Security
 
+> **⚠️ SSRF protection is OFF by default.** If URLs come from user input, configure `allowed_hosts` and/or enable `block_private_hosts` — otherwise users can make your workers fetch internal endpoints (cloud metadata services, private APIs, etc.).
+
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `allowed_hosts` | `FILE_STASH_ALLOWED_HOSTS` | `null` (all) | Host whitelist for SSRF protection |
-| `mime_types` | — | `[]` (all) | Allowed MIME types |
+| `allowed_hosts` | `FILE_STASH_ALLOWED_HOSTS` | `null` (all allowed) | Host whitelist for SSRF protection |
+| `block_private_hosts` | `FILE_STASH_BLOCK_PRIVATE_HOSTS` | `false` | Reject private/loopback/link-local addresses |
+| `mime_types` | — | `[]` (all) | Allowed MIME types (compared case-insensitively, `; charset=…` parameters ignored) |
+
+`allowed_hosts` semantics — read carefully:
+
+- `null` or `''` — **all hosts allowed** (the default!)
+- `[]` (empty array) — **all remote hosts blocked**
+- a list — only the listed hosts allowed; redirect targets are validated too
 
 ```php
-// Wildcards supported
+// Wildcards supported; '*.cdn.example.com' also matches 'cdn.example.com' itself
 'allowed_hosts' => ['example.com', '*.cdn.example.com'],
 ```
 
@@ -454,6 +478,10 @@ php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProv
 FILE_STASH_ALLOWED_HOSTS=example.com,*.cdn.example.com
 ```
 
+`block_private_hosts` rejects IP literals from the special-purpose IPv4/IPv6 ranges — private, loopback, link-local, CGNAT `100.64/10` (cloud metadata services live there), benchmarking, TEST-NETs, multicast, reserved, NAT64 `64:ff9b::/96`, Teredo, 6to4 `2002::/16` (blanket-denied), ULA, site-local, and v4-mapped IPv6 (checked by the IPv4 rules). Hostnames are resolved via DNS **and** the hosts file (A and AAAA records; all resolved addresses are checked), and hosts that resolve to nothing are rejected (fail closed). It cannot protect against DNS rebinding, because curl resolves the hostname again for the actual request; use `allowed_hosts` as the primary defense.
+
+IPv6 literals — in URLs and in `allowed_hosts` — are canonicalized before comparison, so `https://[2001:DB8::0001]/…` matches a whitelisted `2001:db8::1`. A non-empty `allowed_hosts` value that parses to zero hosts (a stray `','`, whitespace-only entries) throws `InvalidConfigurationException`; blocking all remote hosts requires an explicit empty array.
+
 ### Concurrency
 
 | Key | Env | Default | Description |
@@ -461,7 +489,8 @@ FILE_STASH_ALLOWED_HOSTS=example.com,*.cdn.example.com
 | `lock_max_attempts` | `FILE_STASH_LOCK_MAX_ATTEMPTS` | `3` | Lock acquisition retries |
 | `lock_wait_timeout` | `FILE_STASH_LOCK_WAIT_TIMEOUT` | `-1` (forever) | Lock wait timeout (seconds) |
 | `lifecycle_lock_timeout` | `FILE_STASH_LIFECYCLE_LOCK_TIMEOUT` | `30` | Batch/clear coordination timeout |
-| `batch_chunk_size` | `FILE_STASH_BATCH_CHUNK_SIZE` | `100` | Files per chunk (prevents fd exhaustion) |
+| `batch_chunk_size` | `FILE_STASH_BATCH_CHUNK_SIZE` | `100` | Files per chunk (prevents fd exhaustion; `-1` = no chunking) |
+| `legacy_lifecycle_lock` | `FILE_STASH_LEGACY_LIFECYCLE_LOCK` | `true` | v4 coexistence: also take the v4-style lock in the system temp dir and purge zero-length entries as v4 artifacts (see Upgrading) |
 
 ### Pruning
 
@@ -491,8 +520,9 @@ All exceptions are in `Jackardios\FileStash\Exceptions` with `public readonly` p
 | `MimeTypeIsNotAllowedException` | MIME type not allowed | `string $mimeType` |
 | `InvalidConfigurationException` | Invalid config value | `string $key`, `string $reason` |
 | `SourceResourceIsInvalidException` | Invalid stream resource | — |
-| `SourceResourceTimedOutException` | Stream read timed out | — |
-| `FailedToRetrieveFileException` | All retries exhausted | — |
+| `SourceResourceTimedOutException` | Storage-disk stream read timed out | — |
+| `FailedToRetrieveFileException` | All retries exhausted | `int $statusCode` (`0` if not HTTP) |
+| `LifecycleLockTimeoutException` | Lifecycle lock not acquired within `lifecycle_lock_timeout` (extends `RuntimeException`; `forget()` catches it and returns `false`) | — |
 
 ```php
 use Jackardios\FileStash\Exceptions\HostNotAllowedException;
@@ -508,7 +538,7 @@ try {
 
 ## Testing
 
-The facade ships with a fake that skips real HTTP/disk operations:
+The facade ships with a fake that skips real HTTP/disk operations but still hands your callbacks **real local files**, so code that reads the file (Imagick, PhpSpreadsheet, `hash_file()`, …) works in tests:
 
 ```php
 use FileStash;
@@ -516,17 +546,88 @@ use Jackardios\FileStash\GenericFile;
 
 public function test_it_processes_file(): void
 {
-    FileStash::fake();
+    $fake = FileStash::fake();
+
+    // Optional: control the file's content (default is deterministic per URL)
+    $fake->putFake('https://example.com/image.jpg', 'fake image bytes');
 
     $file = new GenericFile('https://example.com/image.jpg');
 
-    $result = FileStash::get($file, fn ($file, $path) => 'processed');
+    $result = FileStash::get($file, fn ($file, $path) => file_get_contents($path));
 
-    $this->assertEquals('processed', $result);
+    $this->assertEquals('fake image bytes', $result);
+    $fake->assertRetrieved('https://example.com/image.jpg');
 }
 ```
 
-The fake supports all contract methods: `get`, `getOnce`, `batch`, `batchOnce`, `forget`, `exists`, `prune`, `clear`, `metrics`.
+The fake supports all contract methods (`get`, `getOnce`, `batch`, `batchOnce`, `forget`, `exists`, `prune`, `clear`, `metrics`) plus test helpers:
+
+```php
+$fake->putFake($url, $content);          // seed a file with specific content
+$fake->shouldExist($url, false);         // control what exists() reports
+$fake->path();                           // the fake's temp directory
+
+$fake->assertRetrieved($url);            // get/getOnce/batch/batchOnce was called for the URL
+$fake->assertRetrievedTimes($url, 3);
+$fake->assertNotRetrieved($url);
+$fake->assertNothingRetrieved();
+$fake->assertForgotten($url);            // forget() was called for the URL
+```
+
+Metrics are tracked and `getOnce()`/`batchOnce()` really delete their files, so eviction-sensitive code paths behave like production.
+
+`FileStashFake` extends the real `FileStash`, so `FileStash::fake()` also works for code that type-hints (or resolves from the container) the concrete class. Prefer the `Jackardios\FileStash\Contracts\FileStash` contract in your own typehints anyway — it keeps your code decoupled from the implementation. Like `Storage::fake()`, the fake works in a stable directory under `storage/framework/testing` (suffixed with the parallel-testing token when running `php artisan test --parallel`) that is wiped every time a fake is constructed.
+
+---
+
+## Known Limitations
+
+- **Local filesystem only.** All guarantees are built on `flock()`, atomic `rename()`, and inode semantics of a local POSIX filesystem. Do **not** point `path` at NFS or other network mounts — advisory locking there ranges from unreliable to silently broken. In multi-server setups give each server its own cache directory.
+- **flock has no fairness.** An exclusive waiter (`clear()`, a `getOnce()` cleanup) can be starved indefinitely by a continuous stream of shared readers on a very hot file. In practice the `lifecycle_lock_timeout` bounds the wait; design hot paths so `clear()` isn't racing them constantly.
+- **Chunked batches release per-file locks before the callback** — see [Batch + prune](#batch--prune).
+- **`block_private_hosts` cannot stop DNS rebinding** — curl re-resolves the hostname for the actual request. Use `allowed_hosts` as the primary SSRF defense.
+- **`pcntl_fork()`**: the lifecycle-lock reentrancy registry is per process. A child forked while the parent holds a lifecycle lock shares the lock file descriptor with unpredictable results — don't fork mid-callback.
+
+---
+
+## Upgrading v4 → v5
+
+v5 is a major rewrite of the write protocol. For Laravel 10 / PHP 8.1 stay on v4.x.
+
+### Requirements
+
+- PHP `^8.2` (was `^8.1`), Laravel `^11 || ^12 || ^13` (was `^10 || ^11 || ^12`)
+
+### Behavior changes
+
+| Change | v4 | v5 |
+|---|---|---|
+| Write protocol | `LOCK_EX` on the final path while writing | claim lock + exclusively locked temp file + atomic `rename()` |
+| Cache directory contents | entries only | also `.locks/` (claim files), `.lifecycle.lock`, transient `*.tmp` |
+| Lifecycle lock location | system temp dir | inside the cache directory |
+| `timeout` default | `-1` (unlimited) | `300` seconds |
+| `user_agent` default | `Laravel-FileStash/4.x` | `Laravel-FileStash/5.x` |
+| Prune command | `prune-file-stash` | `file-stash:prune` (old name is a deprecated alias) |
+| Invalid config values | silently coerced (e.g. a string `mime_types` disabled the whitelist!) | throw `InvalidConfigurationException` |
+| `read_timeout` for HTTP | `stream_set_timeout` on the response stream | curl low-speed abort; HTTP timeouts surface as Guzzle exceptions |
+| `exists()` with a MIME whitelist and no `Content-Type` header | allowed | denied (deny-by-default, matches disk behavior) |
+| `forget()` / once-cleanup vs. running batches | racy | excluded by the lifecycle lock; nested inside a batch callback the deletion is deferred until the batch ends |
+| `CacheMiss` event | `$file`, `$url` | `$file` only (`$url` was a duplicate of `$file->getUrl()`) |
+| `app(FileStash::class)` | created a second instance | aliased to the `file-stash` singleton |
+| `FileStash::fake()` | no-op stub, no real files | creates real files, records calls, provides `assert*()` helpers |
+| Events | plain classes | `final readonly` |
+
+Standalone (non-Laravel) construction now requires an explicit absolute `path` in the config array, and `disk://` URLs require passing a `FilesystemManager` to the constructor.
+
+### Rolling deploys
+
+v4 and v5 workers can run side by side against the same cache directory during a rolling deploy:
+
+- v5 entries are only ever published complete (atomic rename), so v4 readers are safe.
+- v5 keeps taking the v4-style lifecycle lock in the system temp dir while `legacy_lifecycle_lock` is `true` (the default), so v4 `clear()`/`batch()` still coordinate with v5 workers.
+- Zero-length entries left by the v4 protocol are detected and re-downloaded by v5 (this purge is active only while `legacy_lifecycle_lock` is `true`; with it disabled, zero-byte entries are valid cache content).
+
+Once **all** workers run v5, set `legacy_lifecycle_lock => false` (the option will be removed in v6).
 
 ---
 

@@ -4,11 +4,10 @@ namespace Jackardios\FileStash\Events;
 
 use Jackardios\FileStash\Contracts\File;
 
-class CacheHit
+final readonly class CacheHit
 {
     public function __construct(
-        public readonly File $file,
-        public readonly string $cachedPath
-    ) {
-    }
+        public File $file,
+        public string $cachedPath
+    ) {}
 }

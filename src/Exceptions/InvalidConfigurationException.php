@@ -8,6 +8,7 @@ use Throwable;
 class InvalidConfigurationException extends Exception
 {
     public readonly string $key;
+
     public readonly string $reason;
 
     public function __construct(string $message = '', int $code = 0, ?Throwable $previous = null, string $key = '', string $reason = '')

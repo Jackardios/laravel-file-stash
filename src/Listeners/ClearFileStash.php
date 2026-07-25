@@ -6,9 +6,7 @@ use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
 
 class ClearFileStash
 {
-    public function __construct(protected FileStashContract $cache)
-    {
-    }
+    public function __construct(protected FileStashContract $cache) {}
 
     /**
      * Handle the event.

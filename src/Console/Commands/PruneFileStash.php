@@ -2,8 +2,8 @@
 
 namespace Jackardios\FileStash\Console\Commands;
 
-use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
 use Illuminate\Console\Command;
+use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
 
 class PruneFileStash extends Command
 {
@@ -12,7 +12,7 @@ class PruneFileStash extends Command
      *
      * @var string
      */
-    protected $signature = 'prune-file-stash {--silent : Suppress output}';
+    protected $signature = 'file-stash:prune {--silent : Suppress output}';
 
     /**
      * The console command description.
@@ -21,6 +21,14 @@ class PruneFileStash extends Command
      */
     protected $description = 'Remove cached files that are too old or exceed the maximum cache size';
 
+    public function __construct()
+    {
+        parent::__construct();
+
+        // Old v4 command name; deprecated, will be removed in v6.
+        $this->setAliases(['prune-file-stash']);
+    }
+
     /**
      * Execute the console command.
      */
@@ -28,15 +36,15 @@ class PruneFileStash extends Command
     {
         $stats = $cache->prune();
 
-        if (!$this->option('silent')) {
-            if (!$stats['completed']) {
+        if (! $this->option('silent')) {
+            if (! $stats['completed']) {
                 $this->warn('Prune operation did not complete (timed out).');
             } else {
                 $this->info('File cache pruned successfully.');
             }
             $this->line("  Deleted: {$stats['deleted']} files");
             $this->line("  Remaining: {$stats['remaining']} files");
-            $this->line("  Total size: " . $this->formatBytes($stats['total_size']));
+            $this->line('  Total size: '.$this->formatBytes($stats['total_size']));
         }
 
         return self::SUCCESS;
@@ -52,7 +60,7 @@ class PruneFileStash extends Command
         }
 
         $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $factor = floor(log($bytes, 1024));
+        $factor = (int) floor(log($bytes, 1024));
         $factor = min($factor, count($units) - 1);
 
         return sprintf('%.2f %s', $bytes / (1024 ** $factor), $units[$factor]);

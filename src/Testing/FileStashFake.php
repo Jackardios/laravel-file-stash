@@ -3,40 +3,125 @@
 namespace Jackardios\FileStash\Testing;
 
 use Illuminate\Contracts\Foundation\Application;
-use Jackardios\FileStash\Contracts\File;
-use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
-use Jackardios\FileStash\Support\CacheMetrics;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\ParallelTesting;
+use Jackardios\FileStash\Contracts\File;
+use Jackardios\FileStash\FileStash;
+use PHPUnit\Framework\Assert;
+use Throwable;
 
-class FileStashFake implements FileStashContract
+/**
+ * Test double for the file cache.
+ *
+ * Extends the real FileStash, so `FileStash::fake()` keeps working for code
+ * that type-hints (or resolves from the container) the concrete class, not
+ * only the contract. All cache operations are replaced with fast in-memory
+ * bookkeeping plus real files on disk — with deterministic content derived
+ * from the URL, or content registered via putFake() — so callbacks that
+ * read the cached file keep working. Every retrieval is recorded and can be
+ * verified with the assert*() helpers.
+ *
+ * Mirrors Storage::fake(): the fake works in a stable directory under
+ * storage/framework/testing (suffixed with the parallel-testing token when
+ * present) that is wiped on construction.
+ */
+class FileStashFake extends FileStash
 {
-    protected string $path;
+    /**
+     * Number of retrievals per URL.
+     *
+     * @var array<string, int>
+     */
+    protected array $retrieved = [];
 
-    protected CacheMetrics $metrics;
+    /**
+     * Forced exists() results per URL.
+     *
+     * @var array<string, bool>
+     */
+    protected array $existsMap = [];
+
+    /**
+     * URLs passed to forget().
+     *
+     * @var array<int, string>
+     */
+    protected array $forgotten = [];
+
+    /**
+     * Custom file content per URL.
+     *
+     * @var array<string, string>
+     */
+    protected array $customContent = [];
 
     /**
      * Create a new fake file cache instance.
      *
-     * @param Application|null $app Application instance (optional, for compatibility)
+     * @param  Application|null  $app  Application instance (optional, for compatibility)
      */
     public function __construct(?Application $app = null)
     {
         $storagePath = $app?->storagePath() ?? storage_path();
+        $path = "{$storagePath}/framework/testing/disks/file-stash".$this->parallelTestingSuffix();
 
-        (new Filesystem)->cleanDirectory(
-            $root = "{$storagePath}/framework/testing/disks/file-stash"
+        $files = new Filesystem;
+        $files->makeDirectory($path, 0755, true, true);
+        $files->cleanDirectory($path);
+
+        parent::__construct(
+            ['path' => $path, 'events_enabled' => false, 'legacy_lifecycle_lock' => false],
+            null,
+            $files
         );
-
-        $this->path = $root;
-        $this->metrics = new CacheMetrics();
     }
 
     /**
-     * Get the in-process cache metrics.
+     * Directory suffix isolating parallel test workers (mirrors Storage::fake()).
      */
-    public function metrics(): CacheMetrics
+    protected function parallelTestingSuffix(): string
     {
-        return $this->metrics;
+        if (! class_exists(ParallelTesting::class)) {
+            return '';
+        }
+
+        try {
+            $token = ParallelTesting::token();
+        } catch (Throwable) {
+            // No container/facade root available — single-process run.
+            return '';
+        }
+
+        return $token === false ? '' : "_{$token}";
+    }
+
+    /**
+     * Register custom content for a URL. get()/batch() will write it into the
+     * fake cached file, and exists() will report the URL as existing.
+     */
+    public function putFake(string $url, string $content): static
+    {
+        $this->customContent[$url] = $content;
+
+        return $this;
+    }
+
+    /**
+     * Control the result of exists() for a URL.
+     */
+    public function shouldExist(string $url, bool $exists = true): static
+    {
+        $this->existsMap[$url] = $exists;
+
+        return $this;
+    }
+
+    /**
+     * Get the directory the fake writes its files to.
+     */
+    public function path(): string
+    {
+        return $this->config['path'];
     }
 
     /**
@@ -44,11 +129,11 @@ class FileStashFake implements FileStashContract
      */
     public function get(File $file, ?callable $callback = null, bool $throwOnLock = false)
     {
-        $callback = $callback ?? static fn(File $file, string $path): string => $path;
+        $callback = $callback ?? static fn (File $file, string $path): string => $path;
 
         return $this->batch([$file], function ($files, $paths) use ($callback) {
-            return call_user_func($callback, $files[0], $paths[0]);
-        });
+            return $callback($files[0], $paths[0]);
+        }, $throwOnLock);
     }
 
     /**
@@ -56,7 +141,11 @@ class FileStashFake implements FileStashContract
      */
     public function getOnce(File $file, ?callable $callback = null, bool $throwOnLock = false)
     {
-        return $this->get($file, $callback);
+        $callback = $callback ?? static fn (File $file, string $path): string => $path;
+
+        return $this->batchOnce([$file], function ($files, $paths) use ($callback) {
+            return $callback($files[0], $paths[0]);
+        }, $throwOnLock);
     }
 
     /**
@@ -64,13 +153,9 @@ class FileStashFake implements FileStashContract
      */
     public function batch(array $files, ?callable $callback = null, bool $throwOnLock = false)
     {
-        $callback = $callback ?? static fn(array $files, array $paths): array => $paths;
+        $callback = $callback ?? static fn (array $files, array $paths): array => $paths;
 
-        $paths = array_map(function ($file) {
-            $hash = hash('sha256', $file->getUrl());
-
-            return "{$this->path}/{$hash}";
-        }, $files);
+        $paths = array_map(fn (File $file): string => $this->materialize($file), $files);
 
         return $callback($files, $paths);
     }
@@ -80,7 +165,16 @@ class FileStashFake implements FileStashContract
      */
     public function batchOnce(array $files, ?callable $callback = null, bool $throwOnLock = false)
     {
-        return $this->batch($files, $callback);
+        try {
+            return $this->batch($files, $callback, $throwOnLock);
+        } finally {
+            foreach ($files as $file) {
+                $path = $this->pathFor($file->getUrl());
+                if (file_exists($path) && @unlink($path)) {
+                    $this->metrics->evictions++;
+                }
+            }
+        }
     }
 
     /**
@@ -88,7 +182,13 @@ class FileStashFake implements FileStashContract
      */
     public function prune(): array
     {
-        return ['deleted' => 0, 'remaining' => 0, 'total_size' => 0, 'completed' => true];
+        $entries = glob("{$this->path()}/*") ?: [];
+        $totalSize = 0;
+        foreach ($entries as $entry) {
+            $totalSize += (int) @filesize($entry);
+        }
+
+        return ['deleted' => 0, 'remaining' => count($entries), 'total_size' => $totalSize, 'completed' => true];
     }
 
     /**
@@ -96,6 +196,11 @@ class FileStashFake implements FileStashContract
      */
     public function clear(): void
     {
+        foreach (glob("{$this->path()}/*") ?: [] as $entry) {
+            if (@unlink($entry)) {
+                $this->metrics->evictions++;
+            }
+        }
     }
 
     /**
@@ -103,14 +208,21 @@ class FileStashFake implements FileStashContract
      */
     public function forget(File $file): bool
     {
-        $hash = hash('sha256', $file->getUrl());
-        $path = "{$this->path}/{$hash}";
+        $url = $file->getUrl();
+        $this->forgotten[] = $url;
 
-        if (!file_exists($path)) {
+        $path = $this->pathFor($url);
+        if (! file_exists($path)) {
             return false;
         }
 
-        return @unlink($path);
+        if (@unlink($path)) {
+            $this->metrics->evictions++;
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -118,6 +230,104 @@ class FileStashFake implements FileStashContract
      */
     public function exists(File $file): bool
     {
-        return false;
+        $url = $file->getUrl();
+
+        if (array_key_exists($url, $this->existsMap)) {
+            return $this->existsMap[$url];
+        }
+
+        // URLs with registered content or already-retrieved files exist by default.
+        return isset($this->customContent[$url]) || file_exists($this->pathFor($url));
+    }
+
+    /**
+     * Assert that the given URL was retrieved at least once.
+     */
+    public function assertRetrieved(string $url): void
+    {
+        Assert::assertArrayHasKey(
+            $url,
+            $this->retrieved,
+            "Expected file [{$url}] to be retrieved, but it was not."
+        );
+    }
+
+    /**
+     * Assert that the given URL was retrieved exactly $times times.
+     */
+    public function assertRetrievedTimes(string $url, int $times): void
+    {
+        $actual = $this->retrieved[$url] ?? 0;
+
+        Assert::assertSame(
+            $times,
+            $actual,
+            "Expected file [{$url}] to be retrieved {$times} time(s), but it was retrieved {$actual} time(s)."
+        );
+    }
+
+    /**
+     * Assert that the given URL was never retrieved.
+     */
+    public function assertNotRetrieved(string $url): void
+    {
+        Assert::assertArrayNotHasKey(
+            $url,
+            $this->retrieved,
+            "Expected file [{$url}] not to be retrieved, but it was."
+        );
+    }
+
+    /**
+     * Assert that no files were retrieved at all.
+     */
+    public function assertNothingRetrieved(): void
+    {
+        Assert::assertSame(
+            [],
+            $this->retrieved,
+            'Expected no files to be retrieved, but '.count($this->retrieved).' were.'
+        );
+    }
+
+    /**
+     * Assert that forget() was called for the given URL.
+     */
+    public function assertForgotten(string $url): void
+    {
+        Assert::assertContains(
+            $url,
+            $this->forgotten,
+            "Expected file [{$url}] to be forgotten, but it was not."
+        );
+    }
+
+    /**
+     * Create the fake cached file for a URL and record the retrieval.
+     */
+    protected function materialize(File $file): string
+    {
+        $url = $file->getUrl();
+        $path = $this->pathFor($url);
+
+        $this->retrieved[$url] = ($this->retrieved[$url] ?? 0) + 1;
+
+        if (file_exists($path)) {
+            $this->metrics->hits++;
+        } else {
+            $this->metrics->misses++;
+            $this->metrics->retrievals++;
+            file_put_contents($path, $this->customContent[$url] ?? "fake-content:{$url}");
+        }
+
+        return $path;
+    }
+
+    /**
+     * Deterministic fake cache path for a URL.
+     */
+    protected function pathFor(string $url): string
+    {
+        return "{$this->path()}/".hash('sha256', $url);
     }
 }

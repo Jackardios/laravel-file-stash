@@ -7,6 +7,15 @@ use Jackardios\FileStash\Exceptions\InvalidConfigurationException;
 /**
  * Normalize and validate file cache configuration.
  *
+ * This is a pure function of its input: defaults live here, but nothing is
+ * read from the Laravel container. The service provider passes the Laravel
+ * config array in; standalone users pass their own. The `path` key has no
+ * default — it is required and must be an absolute path.
+ *
+ * Invalid values throw an InvalidConfigurationException instead of being
+ * silently coerced, so misconfiguration (e.g. a string `mime_types`) cannot
+ * quietly disable a security feature.
+ *
  * @phpstan-type NormalizedConfig array{
  *   max_file_size: int,
  *   max_age: int,
@@ -19,9 +28,11 @@ use Jackardios\FileStash\Exceptions\InvalidConfigurationException;
  *   prune_timeout: int,
  *   mime_types: array<int, string>,
  *   allowed_hosts: array<int, string>|null,
+ *   block_private_hosts: bool,
  *   http_retries: int,
  *   http_retry_delay: int,
  *   lifecycle_lock_timeout: float,
+ *   legacy_lifecycle_lock: bool,
  *   batch_chunk_size: int,
  *   path: string,
  *   user_agent: string,
@@ -32,60 +43,63 @@ use Jackardios\FileStash\Exceptions\InvalidConfigurationException;
  */
 final class ConfigNormalizer
 {
+    private const DEFAULTS = [
+        'max_file_size' => -1, // any size (-1 = unlimited)
+        'max_age' => 60, // 1 hour in minutes
+        'max_size' => 1_000_000_000, // 1 GB
+        'lock_max_attempts' => 3, // 3 attempts
+        'lock_wait_timeout' => -1.0, // indefinitely (-1 = no limit)
+        'timeout' => 300.0, // 5 minutes for the whole transfer (-1 = no limit)
+        'connect_timeout' => 30.0, // 30 seconds
+        'read_timeout' => 30.0, // 30 seconds
+        'prune_timeout' => 300, // 5 minutes
+        'mime_types' => [],
+        'allowed_hosts' => null, // null = all hosts allowed, [] = all hosts blocked
+        'block_private_hosts' => false,
+        'http_retries' => 0, // no retries by default
+        'http_retry_delay' => 100, // 100ms base delay for retries (exponential backoff)
+        'lifecycle_lock_timeout' => 30.0, // 30 seconds (-1 = indefinitely)
+        'legacy_lifecycle_lock' => true, // also take the v4-style lock in the temp dir; remove in v6
+        'batch_chunk_size' => 100, // chunk size for batch operations
+        'user_agent' => 'Laravel-FileStash/5.x',
+        'max_redirects' => 5,
+        'touch_interval' => 60, // seconds between touch() calls
+        'events_enabled' => false,
+    ];
+
     /**
-     * @param array<string, mixed> $config
+     * @param  array<string, mixed>  $config
      * @return NormalizedConfig
      *
      * @throws InvalidConfigurationException
      */
     public static function normalize(array $config): array
     {
-        $merged = [
-            'max_file_size' => -1, // any size (-1 = unlimited)
-            'max_age' => 60, // 1 hour in minutes
-            'max_size' => 1E+9, // 1 GB
-            'lock_max_attempts' => 3, // 3 attempts
-            'lock_wait_timeout' => -1, // indefinitely (-1 = no limit)
-            'timeout' => -1, // indefinitely (-1 = no limit)
-            'connect_timeout' => 30.0, // 30 seconds
-            'read_timeout' => 30.0, // 30 seconds
-            'prune_timeout' => 300, // 5 minutes
-            'mime_types' => [],
-            'allowed_hosts' => null, // null = all hosts allowed
-            'http_retries' => 0, // no retries by default
-            'http_retry_delay' => 100, // 100ms base delay for retries (exponential backoff)
-            'lifecycle_lock_timeout' => 30.0, // 30 seconds (-1 = indefinitely)
-            'batch_chunk_size' => 100, // chunk size for batch operations
-            'user_agent' => 'Laravel-FileStash/4.x',
-            'max_redirects' => 5,
-            'touch_interval' => 60, // seconds between touch() calls
-            'events_enabled' => false,
-            'path' => self::defaultCachePath(),
-            ...self::loadLaravelConfig(),
-            ...$config,
-        ];
+        $merged = [...self::DEFAULTS, 'path' => null, ...$config];
 
         $normalized = [
-            'max_file_size' => self::toInt($merged['max_file_size']),
-            'max_age' => self::toInt($merged['max_age']),
-            'max_size' => self::toInt($merged['max_size']),
-            'lock_max_attempts' => self::toInt($merged['lock_max_attempts']),
-            'lock_wait_timeout' => self::toFloat($merged['lock_wait_timeout']),
-            'timeout' => self::toFloat($merged['timeout']),
-            'connect_timeout' => self::toFloat($merged['connect_timeout']),
-            'read_timeout' => self::toFloat($merged['read_timeout']),
-            'prune_timeout' => self::toInt($merged['prune_timeout']),
-            'mime_types' => self::toStringList($merged['mime_types']),
-            'allowed_hosts' => self::normalizeAllowedHosts($merged['allowed_hosts']),
-            'http_retries' => max(self::toInt($merged['http_retries']), 0),
-            'http_retry_delay' => max(self::toInt($merged['http_retry_delay']), 0),
-            'lifecycle_lock_timeout' => self::toFloat($merged['lifecycle_lock_timeout']),
-            'batch_chunk_size' => self::toInt($merged['batch_chunk_size']),
-            'user_agent' => self::toString($merged['user_agent']),
-            'max_redirects' => max(self::toInt($merged['max_redirects']), 0),
-            'touch_interval' => max(self::toInt($merged['touch_interval']), 0),
-            'events_enabled' => (bool) $merged['events_enabled'],
-            'path' => self::toString($merged['path']),
+            'max_file_size' => self::toInt($merged['max_file_size'], 'max_file_size'),
+            'max_age' => self::toInt($merged['max_age'], 'max_age'),
+            'max_size' => self::toInt($merged['max_size'], 'max_size'),
+            'lock_max_attempts' => self::toInt($merged['lock_max_attempts'], 'lock_max_attempts'),
+            'lock_wait_timeout' => self::toFloat($merged['lock_wait_timeout'], 'lock_wait_timeout'),
+            'timeout' => self::toFloat($merged['timeout'], 'timeout'),
+            'connect_timeout' => self::toFloat($merged['connect_timeout'], 'connect_timeout'),
+            'read_timeout' => self::toFloat($merged['read_timeout'], 'read_timeout'),
+            'prune_timeout' => self::toInt($merged['prune_timeout'], 'prune_timeout'),
+            'mime_types' => self::toMimeTypes($merged['mime_types']),
+            'allowed_hosts' => self::toAllowedHosts($merged['allowed_hosts']),
+            'block_private_hosts' => self::toBool($merged['block_private_hosts'], 'block_private_hosts'),
+            'http_retries' => self::toInt($merged['http_retries'], 'http_retries'),
+            'http_retry_delay' => self::toInt($merged['http_retry_delay'], 'http_retry_delay'),
+            'lifecycle_lock_timeout' => self::toFloat($merged['lifecycle_lock_timeout'], 'lifecycle_lock_timeout'),
+            'legacy_lifecycle_lock' => self::toBool($merged['legacy_lifecycle_lock'], 'legacy_lifecycle_lock'),
+            'batch_chunk_size' => self::toInt($merged['batch_chunk_size'], 'batch_chunk_size'),
+            'user_agent' => self::toUserAgent($merged['user_agent']),
+            'max_redirects' => self::toInt($merged['max_redirects'], 'max_redirects'),
+            'touch_interval' => self::toInt($merged['touch_interval'], 'touch_interval'),
+            'events_enabled' => self::toBool($merged['events_enabled'], 'events_enabled'),
+            'path' => self::toPath($merged['path']),
         ];
 
         self::validate($normalized);
@@ -94,40 +108,7 @@ final class ConfigNormalizer
     }
 
     /**
-     * @return array<string, mixed>
-     */
-    private static function loadLaravelConfig(): array
-    {
-        try {
-            $config = config('file-stash', []);
-            if (!is_array($config)) {
-                return [];
-            }
-
-            $result = [];
-            foreach ($config as $key => $value) {
-                if (is_string($key)) {
-                    $result[$key] = $value;
-                }
-            }
-
-            return $result;
-        } catch (\Throwable) {
-            return [];
-        }
-    }
-
-    private static function defaultCachePath(): string
-    {
-        try {
-            return storage_path('framework/cache/files');
-        } catch (\Throwable) {
-            return sys_get_temp_dir() . '/laravel-file-stash';
-        }
-    }
-
-    /**
-     * @param NormalizedConfig $config
+     * @param  NormalizedConfig  $config
      *
      * @throws InvalidConfigurationException
      */
@@ -149,131 +130,231 @@ final class ConfigNormalizer
             throw InvalidConfigurationException::create('lock_max_attempts', 'must be at least 1');
         }
 
-        if ($config['lock_wait_timeout'] < -1) {
-            throw InvalidConfigurationException::create('lock_wait_timeout', 'must be -1 (indefinitely) or a non-negative number');
-        }
-
-        if ($config['timeout'] < -1) {
-            throw InvalidConfigurationException::create('timeout', 'must be -1 (indefinitely) or a non-negative number');
-        }
-
-        if ($config['connect_timeout'] < -1) {
-            throw InvalidConfigurationException::create('connect_timeout', 'must be -1 (indefinitely) or a non-negative number');
-        }
-
-        if ($config['read_timeout'] < -1) {
-            throw InvalidConfigurationException::create('read_timeout', 'must be -1 (indefinitely) or a non-negative number');
-        }
+        self::validateTimeout($config['lock_wait_timeout'], 'lock_wait_timeout');
+        self::validateTimeout($config['timeout'], 'timeout');
+        self::validateTimeout($config['connect_timeout'], 'connect_timeout');
+        self::validateTimeout($config['read_timeout'], 'read_timeout');
 
         if ($config['prune_timeout'] < -1) {
             throw InvalidConfigurationException::create('prune_timeout', 'must be -1 (no timeout) or a non-negative number');
         }
 
-        if ($config['lifecycle_lock_timeout'] < -1) {
-            throw InvalidConfigurationException::create('lifecycle_lock_timeout', 'must be -1 (indefinitely) or a non-negative number');
+        if ($config['http_retries'] < 0) {
+            throw InvalidConfigurationException::create('http_retries', 'must be 0 or a positive number');
         }
+
+        if ($config['http_retry_delay'] < 0) {
+            throw InvalidConfigurationException::create('http_retry_delay', 'must be 0 or a positive number');
+        }
+
+        self::validateTimeout($config['lifecycle_lock_timeout'], 'lifecycle_lock_timeout');
 
         if ($config['batch_chunk_size'] < -1 || $config['batch_chunk_size'] === 0) {
             throw InvalidConfigurationException::create('batch_chunk_size', 'must be -1 (no limit) or a positive number');
         }
-    }
 
-    private static function toInt(mixed $value): int
-    {
-        if (is_int($value)) {
-            return $value;
+        if ($config['max_redirects'] < 0) {
+            throw InvalidConfigurationException::create('max_redirects', 'must be 0 or a positive number');
         }
 
-        if (is_float($value)) {
-            return (int) $value;
+        if ($config['touch_interval'] < 0) {
+            throw InvalidConfigurationException::create('touch_interval', 'must be 0 or a positive number');
         }
-
-        if (is_numeric($value)) {
-            return (int) $value;
-        }
-
-        if (is_bool($value)) {
-            return $value ? 1 : 0;
-        }
-
-        return 0;
-    }
-
-    private static function toFloat(mixed $value): float
-    {
-        if (is_float($value)) {
-            return $value;
-        }
-
-        if (is_int($value)) {
-            return (float) $value;
-        }
-
-        if (is_numeric($value)) {
-            return (float) $value;
-        }
-
-        if (is_bool($value)) {
-            return $value ? 1.0 : 0.0;
-        }
-
-        return 0.0;
-    }
-
-    private static function toString(mixed $value): string
-    {
-        if (is_string($value)) {
-            return $value;
-        }
-
-        if (is_int($value) || is_float($value) || is_bool($value)) {
-            return (string) $value;
-        }
-
-        if ($value === null) {
-            return '';
-        }
-
-        if (is_object($value) && method_exists($value, '__toString')) {
-            return (string) $value;
-        }
-
-        return '';
     }
 
     /**
-     * @return array<int, string>|null
+     * A timeout is either the -1 "indefinitely" sentinel or non-negative.
+     * Rejecting the open interval (-1, 0) matters: values like -0.5 would
+     * otherwise silently disable the timeout instead of throwing.
+     *
+     * @throws InvalidConfigurationException
      */
-    private static function normalizeAllowedHosts(mixed $allowedHosts): ?array
+    private static function validateTimeout(float $value, string $key): void
     {
-        if ($allowedHosts === null) {
-            return null;
+        if ($value !== -1.0 && $value < 0.0) {
+            throw InvalidConfigurationException::create($key, 'must be -1 (indefinitely) or a non-negative number');
+        }
+    }
+
+    /**
+     * @throws InvalidConfigurationException
+     */
+    private static function toInt(mixed $value, string $key): int
+    {
+        if (is_int($value)) {
+            return $value;
         }
 
-        if (is_string($allowedHosts)) {
-            if ($allowedHosts === '') {
-                return null;
+        if (is_float($value) && floor($value) === $value && abs($value) <= (float) PHP_INT_MAX) {
+            return (int) $value;
+        }
+
+        if (is_string($value) && is_numeric($value)) {
+            $float = (float) $value;
+            if (floor($float) === $float && abs($float) <= (float) PHP_INT_MAX) {
+                return (int) $float;
             }
-
-            return array_values(array_map('trim', explode(',', $allowedHosts)));
         }
 
-        if (is_array($allowedHosts)) {
-            return self::toStringList($allowedHosts);
+        throw InvalidConfigurationException::create($key, 'must be an integer');
+    }
+
+    /**
+     * @throws InvalidConfigurationException
+     */
+    private static function toFloat(mixed $value, string $key): float
+    {
+        if (is_float($value)) {
+            return $value;
         }
 
-        return [trim(self::toString($allowedHosts))];
+        if (is_int($value)) {
+            return (float) $value;
+        }
+
+        if (is_string($value) && is_numeric($value)) {
+            return (float) $value;
+        }
+
+        throw InvalidConfigurationException::create($key, 'must be a number');
+    }
+
+    /**
+     * @throws InvalidConfigurationException
+     */
+    private static function toBool(mixed $value, string $key): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        // Env vars arrive as strings; accept the usual "true"/"false"/"1"/"0"
+        // spellings but reject anything ambiguous.
+        $filtered = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        if (is_bool($filtered)) {
+            return $filtered;
+        }
+
+        throw InvalidConfigurationException::create($key, 'must be a boolean');
+    }
+
+    /**
+     * @throws InvalidConfigurationException
+     */
+    private static function toUserAgent(mixed $value): string
+    {
+        if (! is_string($value)) {
+            throw InvalidConfigurationException::create('user_agent', 'must be a string');
+        }
+
+        $value = trim($value);
+
+        if ($value === '') {
+            throw InvalidConfigurationException::create('user_agent', 'must not be empty');
+        }
+
+        if (preg_match('/[\x00-\x1F\x7F]/', $value) === 1) {
+            throw InvalidConfigurationException::create('user_agent', 'must not contain control characters');
+        }
+
+        return $value;
+    }
+
+    /**
+     * @throws InvalidConfigurationException
+     */
+    private static function toPath(mixed $value): string
+    {
+        if (! is_string($value) || trim($value) === '') {
+            throw InvalidConfigurationException::create('path', 'is required and must be a non-empty string');
+        }
+
+        $path = rtrim($value, '/\\');
+
+        if (! self::isAbsolutePath($path)) {
+            throw InvalidConfigurationException::create('path', 'must be an absolute path');
+        }
+
+        return $path;
+    }
+
+    private static function isAbsolutePath(string $path): bool
+    {
+        if (str_starts_with($path, '/') || str_starts_with($path, '\\\\')) {
+            return true;
+        }
+
+        return preg_match('#^[A-Za-z]:[\\\\/]#', $path) === 1;
     }
 
     /**
      * @return array<int, string>
+     *
+     * @throws InvalidConfigurationException
      */
-    private static function toStringList(mixed $value): array
+    private static function toMimeTypes(mixed $value): array
     {
-        if (!is_array($value)) {
-            return [];
+        if (! is_array($value)) {
+            throw InvalidConfigurationException::create('mime_types', 'must be an array of MIME type strings');
         }
 
-        return array_values(array_map(static fn(mixed $item): string => trim(self::toString($item)), $value));
+        $types = [];
+        foreach ($value as $type) {
+            if (! is_string($type) || trim($type) === '') {
+                throw InvalidConfigurationException::create('mime_types', 'must contain only non-empty MIME type strings');
+            }
+
+            // MimeGuard compares normalized (lowercase) types strictly.
+            $types[] = strtolower(trim($type));
+        }
+
+        return $types;
+    }
+
+    /**
+     * @return array<int, string>|null
+     *
+     * @throws InvalidConfigurationException
+     */
+    private static function toAllowedHosts(mixed $value): ?array
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_string($value)) {
+            // An empty string (e.g. an unset env var) means "no restriction",
+            // while an empty array means "all remote hosts blocked".
+            if (trim($value) === '') {
+                return null;
+            }
+
+            $value = explode(',', $value);
+        }
+
+        if (! is_array($value)) {
+            throw InvalidConfigurationException::create('allowed_hosts', 'must be null, a comma-separated string, or an array of hostnames');
+        }
+
+        $hosts = [];
+        foreach ($value as $host) {
+            if (! is_string($host)) {
+                throw InvalidConfigurationException::create('allowed_hosts', 'must contain only hostname strings');
+            }
+
+            $host = IpRanges::canonicalizeHost(trim($host));
+            if ($host !== '') {
+                $hosts[] = $host;
+            }
+        }
+
+        // A non-empty input that parses to zero hosts (',', [' '], ...) is a
+        // typo, not a request to block every remote host. Blocking all hosts
+        // requires an explicit empty array.
+        if ($hosts === [] && $value !== []) {
+            throw InvalidConfigurationException::create('allowed_hosts', 'parsed to zero hosts; use an explicit empty array to block all remote hosts');
+        }
+
+        return $hosts;
     }
 }

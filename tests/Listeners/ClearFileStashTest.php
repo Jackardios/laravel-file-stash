@@ -6,14 +6,16 @@ use Jackardios\FileStash\Tests\TestCase;
 
 class ClearFileStashTest extends TestCase
 {
-    public function setUp(): void
+    protected string $cachePath;
+
+    protected function setUp(): void
     {
         parent::setUp();
-        $this->cachePath = sys_get_temp_dir().'/biigle_file_cache_test_listener_'.uniqid('', true);
+        $this->cachePath = sys_get_temp_dir().'/file_stash_test_listener_'.uniqid('', true);
         $this->app['files']->makeDirectory($this->cachePath, 0755, false, true);
     }
 
-    public function tearDown(): void
+    protected function tearDown(): void
     {
         if ($this->app['files']->exists($this->cachePath)) {
             $this->app['files']->deleteDirectory($this->cachePath);

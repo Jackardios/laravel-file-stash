@@ -2,8 +2,8 @@
 
 namespace Jackardios\FileStash\Facades;
 
-use Jackardios\FileStash\Testing\FileStashFake;
 use Illuminate\Support\Facades\Facade;
+use Jackardios\FileStash\Testing\FileStashFake;
 
 /**
  * @method static bool exists(\Jackardios\FileStash\Contracts\File $file)
@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static mixed batch(\Jackardios\FileStash\Contracts\File[] $files, ?callable $callback = null, bool $throwOnLock = false)
  * @method static mixed batchOnce(\Jackardios\FileStash\Contracts\File[] $files, ?callable $callback = null, bool $throwOnLock = false)
  * @method static bool forget(\Jackardios\FileStash\Contracts\File $file)
- * @method static array prune()
+ * @method static array{deleted: int, remaining: int, total_size: int, completed: bool} prune()
  * @method static void clear()
  * @method static \Jackardios\FileStash\Support\CacheMetrics metrics()
  *
@@ -21,11 +21,13 @@ use Illuminate\Support\Facades\Facade;
 class FileStash extends Facade
 {
     /**
-     * Use testing instance.
+     * Swap the bound instance for a testing fake and return it.
      */
-    public static function fake(): void
+    public static function fake(): FileStashFake
     {
-        static::swap(new FileStashFake(static::getFacadeApplication()));
+        static::swap($fake = new FileStashFake(static::getFacadeApplication()));
+
+        return $fake;
     }
 
     /**

@@ -2,18 +2,18 @@
 
 namespace Jackardios\FileStash\Tests\Facades;
 
+use FileStash;
 use Jackardios\FileStash\Facades\FileStash as FileStashFacade;
 use Jackardios\FileStash\FileStash as BaseFileStash;
 use Jackardios\FileStash\GenericFile;
 use Jackardios\FileStash\Tests\TestCase;
-use FileStash;
 
 class FileStashTest extends TestCase
 {
-    public function setUp(): void
+    protected function setUp(): void
     {
         parent::setUp();
-        if (!class_exists(FileStash::class)) {
+        if (! class_exists(FileStash::class)) {
             class_alias(FileStashFacade::class, 'FileStash');
         }
     }
@@ -25,12 +25,14 @@ class FileStashTest extends TestCase
 
     public function testFake()
     {
-        FileStash::fake();
+        $fake = FileStash::fake();
         $file = new GenericFile('https://example.com/image.jpg');
         $path = FileStash::get($file, function ($file, $path) {
             return $path;
         });
 
-        $this->assertFalse($this->app['files']->exists($path));
+        // The fake creates real files so callbacks can read them.
+        $this->assertTrue($this->app['files']->exists($path));
+        $fake->assertRetrieved('https://example.com/image.jpg');
     }
 }

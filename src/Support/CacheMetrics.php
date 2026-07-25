@@ -5,9 +5,13 @@ namespace Jackardios\FileStash\Support;
 class CacheMetrics
 {
     public int $hits = 0;
+
     public int $misses = 0;
+
     public int $evictions = 0;
+
     public int $retrievals = 0;
+
     public int $errors = 0;
 
     /**

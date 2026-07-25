@@ -16,7 +16,7 @@ return [
     | Maximum size (soft limit) of the file cache in bytes. If the cache exceeds
     | this size, old files are pruned.
     */
-    'max_size' => env('FILE_STASH_MAX_SIZE', 1E+9), // 1 GB
+    'max_size' => env('FILE_STASH_MAX_SIZE', 1_000_000_000), // 1 GB
 
     /*
     | Directory to use for the file cache.
@@ -38,12 +38,12 @@ return [
     'lock_wait_timeout' => env('FILE_STASH_LOCK_WAIT_TIMEOUT', -1),
 
     /*
-     | Total connection timeout when reading remote files in seconds.
+     | Total timeout for downloading a remote file in seconds.
      | If loading the file takes longer than this, it will fail.
      | Set to -1 to wait indefinitely.
-     | Default: -1 (indefinitely)
+     | Default: 300 seconds (5 minutes)
      */
-    'timeout' => env('FILE_STASH_TIMEOUT', -1),
+    'timeout' => env('FILE_STASH_TIMEOUT', 300),
 
     /*
      | Timeout to initiate a connection to load a remote file in seconds.
@@ -53,14 +53,18 @@ return [
     'connect_timeout' => env('FILE_STASH_CONNECT_TIMEOUT', 30.0),
 
     /*
-     | Timeout for reading a stream of a remote file in seconds.
-     | If it takes longer, it will fail. Set to -1 to wait indefinitely.
+     | Stall timeout for reading file data in seconds.
+     | For HTTP(S) sources this maps to curl's low-speed abort: the transfer
+     | fails when it stalls below 1 byte/s for this many seconds (whole
+     | seconds, rounded up). For storage-disk streams it is applied via
+     | stream_set_timeout(). Set to -1 to wait indefinitely.
      | Default: 30 seconds
      */
     'read_timeout' => env('FILE_STASH_READ_TIMEOUT', 30.0),
 
     /*
-     | Interval for the scheduled task to prune the file cache.
+     | Cron expression for the scheduled `file-stash:prune` task.
+     | Set to null to disable the scheduled prune entirely.
      */
     'prune_interval' => env('FILE_STASH_PRUNE_INTERVAL', '*/5 * * * *'),
 
@@ -76,18 +80,46 @@ return [
      | Allowed MIME types for cached files. Fetching of files with any other type fails.
      | This is especially useful for files from a remote source. Leave empty to allow all
      | types.
+     |
+     | Comparison is case-insensitive and ignores parameters ("text/plain;
+     | charset=utf-8" matches 'text/plain'). Files whose type cannot be
+     | detected — including empty files — are always rejected when a
+     | whitelist is configured (deny by default).
      */
     'mime_types' => [],
 
     /*
-     | Allowed hosts for remote file fetching. This is a security feature to prevent
-     | SSRF (Server-Side Request Forgery) attacks. Set to null to allow all hosts,
-     | or provide an array of allowed hostnames.
+     | Allowed hosts for remote file fetching. This is a security feature to
+     | prevent SSRF (Server-Side Request Forgery) attacks.
+     |
+     | IMPORTANT semantics:
+     |   - null or ''  => ALL hosts are allowed (no restriction; the default!)
+     |   - []          => ALL remote hosts are blocked
+     |   - array/comma-separated string => only the listed hosts are allowed
+     |
      | Example: ['example.com', 'cdn.example.com', '*.trusted-domain.com']
-     | Wildcards (*) are supported at the beginning of hostnames.
+     | Wildcards (*.) are supported at the beginning of hostnames and also
+     | match the root domain itself. IPv6 literals are canonicalized before
+     | comparison. A non-empty value that parses to zero hosts (e.g. ',')
+     | throws InvalidConfigurationException — blocking all remote hosts
+     | requires an explicit [].
      | Default: null (all hosts allowed)
      */
     'allowed_hosts' => env('FILE_STASH_ALLOWED_HOSTS', null),
+
+    /*
+     | Block requests to private and other special-purpose addresses (SSRF
+     | protection). IP literals from the reserved IPv4/IPv6 ranges are
+     | rejected — private, loopback, link-local, CGNAT (cloud metadata),
+     | benchmarking, TEST-NETs, multicast, NAT64, Teredo, 6to4, ULA, and
+     | v4-mapped IPv6. Hostnames are resolved via DNS and the hosts file
+     | (A and AAAA records; all resolved addresses are checked), and hosts
+     | that resolve to nothing are rejected. Redirect targets are validated
+     | as well. Note: this cannot protect against DNS rebinding, because
+     | curl resolves the hostname again for the actual request.
+     | Default: false
+     */
+    'block_private_hosts' => env('FILE_STASH_BLOCK_PRIVATE_HOSTS', false),
 
     /*
      | Number of retry attempts for failed HTTP requests.
@@ -105,10 +137,24 @@ return [
     /*
      | Timeout to wait for lifecycle lock acquisition in seconds.
      | This lock coordinates batch/batchOnce with prune/clear operations.
-     | Set to -1 to wait indefinitely.
+     | On timeout, batch/batchOnce/prune/clear throw
+     | LifecycleLockTimeoutException; forget() logs a warning and returns
+     | false. Set to -1 to wait indefinitely.
      | Default: 30 seconds
      */
     'lifecycle_lock_timeout' => env('FILE_STASH_LIFECYCLE_LOCK_TIMEOUT', 30.0),
+
+    /*
+     | v4 coexistence mode: acquire the v4-style lifecycle lock in the
+     | system temp directory in addition to the in-cache lock, and treat
+     | zero-length cache entries as v4 artifacts (purge + re-download), so
+     | workers running file-stash v4 and v5 side by side (e.g. during a
+     | rolling deploy) still coordinate correctly. Disable once all workers
+     | run v5 — zero-byte entries then become valid cache content. This
+     | option will be removed in v6.
+     | Default: true
+     */
+    'legacy_lifecycle_lock' => env('FILE_STASH_LEGACY_LIFECYCLE_LOCK', true),
 
     /*
      | Maximum number of files to process in a single chunk during
@@ -120,9 +166,9 @@ return [
 
     /*
      | User-Agent header sent with HTTP requests to remote servers.
-     | Default: 'Laravel-FileStash/4.x'
+     | Default: 'Laravel-FileStash/5.x'
      */
-    'user_agent' => env('FILE_STASH_USER_AGENT', 'Laravel-FileStash/4.x'),
+    'user_agent' => env('FILE_STASH_USER_AGENT', 'Laravel-FileStash/5.x'),
 
     /*
      | Maximum number of HTTP redirects to follow.

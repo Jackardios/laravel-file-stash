@@ -2,15 +2,15 @@
 
 namespace Jackardios\FileStash\Tests\Console\Commands;
 
-use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
 use Jackardios\FileStash\Console\Commands\PruneFileStash;
+use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
 use Jackardios\FileStash\Tests\TestCase;
 
 class PruneFileStashTest extends TestCase
 {
     public function testPruneSuccessOutput()
     {
-        $mock = $this->createMock(FileStashContract::class);
+        $mock = $this->createStub(FileStashContract::class);
         $mock->method('prune')->willReturn([
             'completed' => true,
             'deleted' => 3,
@@ -20,7 +20,7 @@ class PruneFileStashTest extends TestCase
 
         $this->app->instance('file-stash', $mock);
 
-        $this->artisan('prune-file-stash')
+        $this->artisan('file-stash:prune')
             ->expectsOutput('File cache pruned successfully.')
             ->expectsOutput('  Deleted: 3 files')
             ->expectsOutput('  Remaining: 10 files')
@@ -29,7 +29,7 @@ class PruneFileStashTest extends TestCase
 
     public function testPruneTimeoutOutput()
     {
-        $mock = $this->createMock(FileStashContract::class);
+        $mock = $this->createStub(FileStashContract::class);
         $mock->method('prune')->willReturn([
             'completed' => false,
             'deleted' => 1,
@@ -39,7 +39,7 @@ class PruneFileStashTest extends TestCase
 
         $this->app->instance('file-stash', $mock);
 
-        $this->artisan('prune-file-stash')
+        $this->artisan('file-stash:prune')
             ->expectsOutput('Prune operation did not complete (timed out).')
             ->expectsOutput('  Deleted: 1 files')
             ->assertExitCode(0);
@@ -47,7 +47,7 @@ class PruneFileStashTest extends TestCase
 
     public function testPruneSilentSuppressesOutput()
     {
-        $mock = $this->createMock(FileStashContract::class);
+        $mock = $this->createStub(FileStashContract::class);
         $mock->method('prune')->willReturn([
             'completed' => true,
             'deleted' => 2,
@@ -57,15 +57,33 @@ class PruneFileStashTest extends TestCase
 
         $this->app->instance('file-stash', $mock);
 
-        $this->artisan('prune-file-stash --silent')
+        $this->artisan('file-stash:prune --silent')
             ->doesntExpectOutput('File cache pruned successfully.')
             ->doesntExpectOutput('Prune operation did not complete (timed out).')
             ->assertExitCode(0);
     }
 
+    public function testDeprecatedCommandAliasStillWorks()
+    {
+        $mock = $this->createStub(FileStashContract::class);
+        $mock->method('prune')->willReturn([
+            'completed' => true,
+            'deleted' => 0,
+            'remaining' => 0,
+            'total_size' => 0,
+        ]);
+
+        $this->app->instance('file-stash', $mock);
+
+        // Old v4 name is kept as an alias until v6.
+        $this->artisan('prune-file-stash')
+            ->expectsOutput('File cache pruned successfully.')
+            ->assertExitCode(0);
+    }
+
     public function testFormatBytesZero()
     {
-        $command = new PruneFileStash();
+        $command = new PruneFileStash;
         $method = new \ReflectionMethod($command, 'formatBytes');
         $method->setAccessible(true);
 
@@ -74,7 +92,7 @@ class PruneFileStashTest extends TestCase
 
     public function testFormatBytesGigabyte()
     {
-        $command = new PruneFileStash();
+        $command = new PruneFileStash;
         $method = new \ReflectionMethod($command, 'formatBytes');
         $method->setAccessible(true);
 
