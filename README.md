@@ -90,7 +90,7 @@ Publish the config (optional):
 php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProvider" --tag="config"
 ```
 
-**Requirements:** PHP ^8.2, Laravel ^11 / ^12 / ^13
+**Requirements:** PHP ^8.2, Laravel ^12 / ^13
 
 ---
 
@@ -596,7 +596,9 @@ v5 is a major rewrite of the write protocol. For Laravel 10 / PHP 8.1 stay on v4
 
 ### Requirements
 
-- PHP `^8.2` (was `^8.1`), Laravel `^11 || ^12 || ^13` (was `^10 || ^11 || ^12`)
+- PHP `^8.2` (was `^8.1`), Laravel `^12 || ^13` (was `^10 || ^11 || ^12`). Laravel 11
+  is not supported: it left its security-fix window before this release, and every
+  11.x version is affected by known security advisories.
 
 ### Behavior changes
 

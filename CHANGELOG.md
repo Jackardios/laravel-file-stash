@@ -11,7 +11,9 @@ for the full migration guide, including rolling-deploy instructions.
 ### Breaking: requirements
 
 - PHP `^8.2` (was `^8.1`); CI covers PHP 8.2–8.5.
-- Laravel `^11 || ^12 || ^13` (was `^10 || ^11 || ^12`).
+- Laravel `^12 || ^13` (was `^10 || ^11 || ^12`). Laravel 11 left its
+  security-fix window before this release and every 11.x version is affected
+  by known security advisories, so it is not supported.
 - `symfony/finder ^7 || ^8`, `guzzlehttp/guzzle ^7.8`, PHPUnit 11–13.
 
 ### Breaking: write-protocol redesign
@@ -189,7 +191,7 @@ for the full migration guide, including rolling-deploy instructions.
   concurrency`): cold-start stampede, prune vs. batch, once-vs-get races,
   writer crash recovery, lifecycle-lock contention, redirect integrity
   through real curl, and deferred-deletion races.
-- CI: PHP 8.2–8.5 × Laravel 11–13 matrix, prefer-lowest job, PHPStan level
+- CI: PHP 8.2–8.5 × Laravel 12–13 matrix, prefer-lowest job, PHPStan level
   max, Laravel Pint.
 
 ## v4.x
