@@ -397,11 +397,12 @@ class FileStashFunctionMockTest extends TestCase
 
         // Each acquisition round: contended for ~150 ms, then "acquired" — but
         // the claim file is unlinked first, so the caller sees nlink == 0 and
-        // retries. Without a shared deadline each of the five inner retries
-        // would get a fresh 0.2 s budget (~0.75 s total here).
+        // retries. One shared 0.2 s budget fits one such round; a fresh budget
+        // per inner retry would let all five of them acquire.
         $roundStart = null;
+        $acquiredRounds = 0;
         $flockMock = $this->getFunctionMock('Jackardios\\FileStash\\Support', 'flock');
-        $flockMock->expects($this->atLeastOnce())->willReturnCallback(function ($stream, $operation, &$wouldBlock = null) use (&$roundStart, $claimPath) {
+        $flockMock->expects($this->atLeastOnce())->willReturnCallback(function ($stream, $operation, &$wouldBlock = null) use (&$roundStart, &$acquiredRounds, $claimPath) {
             if (($operation & LOCK_EX) === 0) {
                 return \flock($stream, $operation, $wouldBlock);
             }
@@ -414,12 +415,11 @@ class FileStashFunctionMockTest extends TestCase
             }
 
             $roundStart = null;
+            $acquiredRounds++;
             @unlink($claimPath);
 
             return \flock($stream, $operation);
         });
-
-        $start = microtime(true);
 
         try {
             $cache->get($file, $this->noop);
@@ -428,11 +428,7 @@ class FileStashFunctionMockTest extends TestCase
             // The claim could never be secured within the budget.
         }
 
-        $this->assertLessThan(
-            0.5,
-            microtime(true) - $start,
-            'Claim retries must share one lock_wait_timeout budget.'
-        );
+        $this->assertSame(1, $acquiredRounds, 'Claim retries must share one lock_wait_timeout budget.');
     }
 
     /**
