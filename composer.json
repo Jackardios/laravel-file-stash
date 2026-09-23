@@ -20,9 +20,10 @@
         "orchestra/testbench": "^10.0 || ^11.0",
         "brianium/paratest": "^7.8",
         "php-mock/php-mock-phpunit": "^2.15",
-        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan": "^2.2.1",
         "laravel/pint": "^1.29",
-        "mockery/mockery": "^1.6.12"
+        "mockery/mockery": "^1.6.12",
+        "paragonie/random_compat": "^9.99"
     },
     "authors": [
         {
