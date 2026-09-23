@@ -39,6 +39,7 @@ class ConfigNormalizerTest extends TestCase
         $this->assertSame(300, $config['prune_timeout']);
         $this->assertSame([], $config['mime_types']);
         $this->assertNull($config['allowed_hosts']);
+        $this->assertNull($config['allowed_disks']);
         $this->assertFalse($config['block_private_hosts']);
         $this->assertSame(0, $config['http_retries']);
         $this->assertSame(100, $config['http_retry_delay']);
@@ -178,6 +179,11 @@ class ConfigNormalizerTest extends TestCase
             'allowed_hosts separators only' => ['allowed_hosts', ','],
             'allowed_hosts spaced separators' => ['allowed_hosts', ' , '],
             'allowed_hosts blank entries array' => ['allowed_hosts', ['', ' ']],
+            // allowed_disks
+            'allowed_disks integer' => ['allowed_disks', 42],
+            'allowed_disks non-string entry' => ['allowed_disks', [123]],
+            'allowed_disks separators only' => ['allowed_disks', ','],
+            'allowed_disks blank entries array' => ['allowed_disks', ['', ' ']],
         ];
     }
 
@@ -244,5 +250,27 @@ class ConfigNormalizerTest extends TestCase
         $config = $this->normalize(['allowed_hosts' => ['EXAMPLE.com', '*.Trusted.COM']]);
 
         $this->assertSame(['example.com', '*.trusted.com'], $config['allowed_hosts']);
+    }
+
+    // -------------------------------------------------------------------------
+    // allowed_disks
+    // -------------------------------------------------------------------------
+
+    public function testAllowedDisksNullOrEmptyStringMeansNoRestriction(): void
+    {
+        $this->assertNull($this->normalize(['allowed_disks' => null])['allowed_disks']);
+        $this->assertNull($this->normalize(['allowed_disks' => ''])['allowed_disks']);
+    }
+
+    public function testAllowedDisksEmptyArrayMeansNoDisks(): void
+    {
+        $this->assertSame([], $this->normalize(['allowed_disks' => []])['allowed_disks']);
+    }
+
+    public function testAllowedDisksCommaSeparatedString(): void
+    {
+        $config = $this->normalize(['allowed_disks' => ' s3, public,,']);
+
+        $this->assertSame(['s3', 'public'], $config['allowed_disks']);
     }
 }

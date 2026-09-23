@@ -75,7 +75,10 @@ for the full migration guide, including how to switch workers over.
 - `timeout` default changed from `-1` (unlimited) to `300` seconds.
 - `user_agent` default changed to `Laravel-FileStash/5.x`.
 - `prune_interval => null` disables the scheduled prune.
-- New option: `block_private_hosts` (SSRF hardening, default `false`).
+- New options: `block_private_hosts` (SSRF hardening, default `false`) and
+  `allowed_disks` (storage disks `disk://path` URLs may read; default
+  `null` = all, `[]` = HTTP(S) only). Rejections throw
+  `DiskNotAllowedException`, a subclass of `HostNotAllowedException`.
 - `block_private_hosts` blocks the full set of special-purpose IPv4/IPv6
   ranges (explicit CIDR lists, not PHP's `filter_var` flags): CGNAT
   `100.64/10` (cloud metadata at `100.100.100.200`), benchmarking

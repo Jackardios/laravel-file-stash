@@ -108,6 +108,19 @@ return [
     'allowed_hosts' => env('FILE_STASH_ALLOWED_HOSTS', null),
 
     /*
+     | Storage disks that `disk://path` URLs may read from.
+     |
+     |   - null or ''  => ALL configured disks are allowed (the default!)
+     |   - []          => no disk is allowed (HTTP(S) URLs only)
+     |   - array/comma-separated string => only the listed disks
+     |
+     | If file URLs come from user input, list only the disks meant for it:
+     | otherwise a URL like `local://.env` reads any configured disk.
+     | Default: null (all disks allowed)
+     */
+    'allowed_disks' => env('FILE_STASH_ALLOWED_DISKS', null),
+
+    /*
      | Block requests to private and other special-purpose addresses (SSRF
      | protection). IP literals from the reserved IPv4/IPv6 ranges are
      | rejected — private, loopback, link-local, CGNAT (cloud metadata),

@@ -28,6 +28,7 @@ use Jackardios\FileStash\Exceptions\InvalidConfigurationException;
  *   prune_timeout: int,
  *   mime_types: array<int, string>,
  *   allowed_hosts: array<int, string>|null,
+ *   allowed_disks: array<int, string>|null,
  *   block_private_hosts: bool,
  *   http_retries: int,
  *   http_retry_delay: int,
@@ -54,6 +55,7 @@ final class ConfigNormalizer
         'prune_timeout' => 300, // 5 minutes
         'mime_types' => [],
         'allowed_hosts' => null, // null = all hosts allowed, [] = all hosts blocked
+        'allowed_disks' => null, // null = all disks allowed, [] = all disks blocked
         'block_private_hosts' => false,
         'http_retries' => 0, // no retries by default
         'http_retry_delay' => 100, // 100ms base delay for retries (exponential backoff)
@@ -87,6 +89,7 @@ final class ConfigNormalizer
             'prune_timeout' => self::toInt($merged['prune_timeout'], 'prune_timeout'),
             'mime_types' => self::toMimeTypes($merged['mime_types']),
             'allowed_hosts' => self::toAllowedHosts($merged['allowed_hosts']),
+            'allowed_disks' => self::toAllowedDisks($merged['allowed_disks']),
             'block_private_hosts' => self::toBool($merged['block_private_hosts'], 'block_private_hosts'),
             'http_retries' => self::toInt($merged['http_retries'], 'http_retries'),
             'http_retry_delay' => self::toInt($merged['http_retry_delay'], 'http_retry_delay'),
@@ -315,13 +318,37 @@ final class ConfigNormalizer
      */
     private static function toAllowedHosts(mixed $value): ?array
     {
+        return self::toAllowList($value, 'allowed_hosts', 'hostnames', 'remote hosts', IpRanges::canonicalizeHost(...));
+    }
+
+    /**
+     * @return array<int, string>|null
+     *
+     * @throws InvalidConfigurationException
+     */
+    private static function toAllowedDisks(mixed $value): ?array
+    {
+        return self::toAllowList($value, 'allowed_disks', 'disk names', 'storage disks', static fn (string $disk): string => $disk);
+    }
+
+    /**
+     * Parse an allow list: null or '' = no restriction, [] = nothing
+     * allowed, otherwise an array or a comma-separated string of names.
+     *
+     * @param  callable(string): string  $canonicalize
+     * @return array<int, string>|null
+     *
+     * @throws InvalidConfigurationException
+     */
+    private static function toAllowList(mixed $value, string $key, string $names, string $subjects, callable $canonicalize): ?array
+    {
         if ($value === null) {
             return null;
         }
 
         if (is_string($value)) {
             // An empty string (e.g. an unset env var) means "no restriction",
-            // while an empty array means "all remote hosts blocked".
+            // while an empty array means "all blocked".
             if (trim($value) === '') {
                 return null;
             }
@@ -330,28 +357,28 @@ final class ConfigNormalizer
         }
 
         if (! is_array($value)) {
-            throw InvalidConfigurationException::create('allowed_hosts', 'must be null, a comma-separated string, or an array of hostnames');
+            throw InvalidConfigurationException::create($key, "must be null, a comma-separated string, or an array of {$names}");
         }
 
-        $hosts = [];
-        foreach ($value as $host) {
-            if (! is_string($host)) {
-                throw InvalidConfigurationException::create('allowed_hosts', 'must contain only hostname strings');
+        $list = [];
+        foreach ($value as $name) {
+            if (! is_string($name)) {
+                throw InvalidConfigurationException::create($key, "must contain only {$names} as strings");
             }
 
-            $host = IpRanges::canonicalizeHost(trim($host));
-            if ($host !== '') {
-                $hosts[] = $host;
+            $name = $canonicalize(trim($name));
+            if ($name !== '') {
+                $list[] = $name;
             }
         }
 
-        // A non-empty input that parses to zero hosts (',', [' '], ...) is a
-        // typo, not a request to block every remote host. Blocking all hosts
-        // requires an explicit empty array.
-        if ($hosts === [] && $value !== []) {
-            throw InvalidConfigurationException::create('allowed_hosts', 'parsed to zero hosts; use an explicit empty array to block all remote hosts');
+        // A non-empty input that parses to zero names (',', [' '], ...) is a
+        // typo, not a request to block everything. Blocking all requires an
+        // explicit empty array.
+        if ($list === [] && $value !== []) {
+            throw InvalidConfigurationException::create($key, "parsed to zero entries; use an explicit empty array to block all {$subjects}");
         }
 
-        return $hosts;
+        return $list;
     }
 }

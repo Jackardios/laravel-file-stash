@@ -16,6 +16,7 @@ use Jackardios\FileStash\Events\CacheFileRetrieved;
 use Jackardios\FileStash\Events\CacheHit;
 use Jackardios\FileStash\Events\CacheMiss;
 use Jackardios\FileStash\Events\CachePruneCompleted;
+use Jackardios\FileStash\Exceptions\DiskNotAllowedException;
 use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
 use Jackardios\FileStash\Exceptions\FileIsTooLargeException;
 use Jackardios\FileStash\Exceptions\FileLockedException;
@@ -1591,11 +1592,18 @@ class FileStash implements FileStashContract
 
     /**
      * Get the storage disk on which a file is stored.
+     *
+     * @throws DiskNotAllowedException
      */
     protected function getDisk(File $file): FilesystemAdapter
     {
         $parts = Url::splitByProtocol($file->getUrl());
         $diskName = $parts[0];
+
+        $allowedDisks = $this->config['allowed_disks'];
+        if ($allowedDisks !== null && ! in_array($diskName, $allowedDisks, true)) {
+            throw DiskNotAllowedException::create($diskName);
+        }
         /** @var FilesystemAdapter $disk */
         $disk = $this->storage()->disk($diskName);
 

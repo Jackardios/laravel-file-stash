@@ -468,11 +468,12 @@ php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProv
 
 ### Security
 
-> **⚠️ SSRF protection is OFF by default.** If URLs come from user input, configure `allowed_hosts` and/or enable `block_private_hosts` — otherwise users can make your workers fetch internal endpoints (cloud metadata services, private APIs, etc.).
+> **⚠️ SSRF protection is OFF by default.** If URLs come from user input, configure `allowed_hosts` and/or enable `block_private_hosts` — otherwise users can make your workers fetch internal endpoints (cloud metadata services, private APIs, etc.). Restrict `allowed_disks` as well: a `disk://path` URL reads from **any** configured storage disk by default (`local://.env`, a private S3 bucket, …).
 
 | Key | Env | Default | Description |
 |---|---|---|---|
 | `allowed_hosts` | `FILE_STASH_ALLOWED_HOSTS` | `null` (all allowed) | Host whitelist for SSRF protection |
+| `allowed_disks` | `FILE_STASH_ALLOWED_DISKS` | `null` (all allowed) | Storage disks `disk://path` URLs may read; `[]` = HTTP(S) only |
 | `block_private_hosts` | `FILE_STASH_BLOCK_PRIVATE_HOSTS` | `false` | Reject private/loopback/link-local addresses |
 | `mime_types` | — | `[]` (all) | Allowed MIME types (compared case-insensitively, `; charset=…` parameters ignored) |
 
@@ -493,6 +494,12 @@ FILE_STASH_ALLOWED_HOSTS=example.com,*.cdn.example.com
 ```
 
 `block_private_hosts` rejects IP literals from the special-purpose IPv4/IPv6 ranges — private, loopback, link-local, CGNAT `100.64/10` (cloud metadata services live there), benchmarking, TEST-NETs, multicast, reserved, NAT64 `64:ff9b::/96`, Teredo, 6to4 `2002::/16` (blanket-denied), ULA, site-local, and v4-mapped IPv6 (checked by the IPv4 rules). Hostnames are resolved via DNS **and** the hosts file (A and AAAA records; all resolved addresses are checked), and hosts that resolve to nothing are rejected (fail closed). It cannot protect against DNS rebinding, because curl resolves the hostname again for the actual request; use `allowed_hosts` as the primary defense.
+
+`allowed_disks` follows the same `null` / `''` / `[]` / list semantics (names are compared exactly) and rejects other disks with `DiskNotAllowedException`, a subclass of `HostNotAllowedException`:
+
+```php
+'allowed_disks' => ['uploads'],   // only uploads://path; other disks are rejected
+```
 
 IPv6 literals — in URLs and in `allowed_hosts` — are canonicalized before comparison, so `https://[2001:DB8::0001]/…` matches a whitelisted `2001:db8::1`. A non-empty `allowed_hosts` value that parses to zero hosts (a stray `','`, whitespace-only entries) throws `InvalidConfigurationException`; blocking all remote hosts requires an explicit empty array.
 
@@ -530,6 +537,7 @@ All exceptions are in `Jackardios\FileStash\Exceptions` with `public readonly` p
 | `FileIsTooLargeException` | File exceeds `max_file_size` | `int $maxBytes` |
 | `FileLockedException` | File locked, `throwOnLock` is `true` | — |
 | `HostNotAllowedException` | Host not in `allowed_hosts` | `string $host` |
+| `DiskNotAllowedException` | Disk not in `allowed_disks` (extends `HostNotAllowedException`) | `string $disk` (also in `$host`) |
 | `MimeTypeIsNotAllowedException` | MIME type not allowed | `string $mimeType` |
 | `InvalidConfigurationException` | Invalid config value | `string $key`, `string $reason` |
 | `SourceResourceIsInvalidException` | Invalid stream resource | — |

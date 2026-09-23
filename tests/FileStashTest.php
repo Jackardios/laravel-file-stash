@@ -21,6 +21,7 @@ use Jackardios\FileStash\Events\CacheFileRetrieved;
 use Jackardios\FileStash\Events\CacheHit;
 use Jackardios\FileStash\Events\CacheMiss;
 use Jackardios\FileStash\Events\CachePruneCompleted;
+use Jackardios\FileStash\Exceptions\DiskNotAllowedException;
 use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
 use Jackardios\FileStash\Exceptions\FileIsTooLargeException;
 use Jackardios\FileStash\Exceptions\FileLockedException;
@@ -1332,6 +1333,41 @@ class FileStashTest extends TestCase
 
         $this->assertFileExists("{$this->cachePath}/.lifecycle.lock");
         $this->assertSame($before, glob("{$tempLocks}/*") ?: []);
+    }
+
+    public function testAllowedDisksRestrictsStorageDiskUrls()
+    {
+        $this->app['files']->put("{$this->diskPath}/secret.txt", 'secret');
+        $cache = $this->createCache(['allowed_disks' => ['fixtures']]);
+
+        $this->assertSame(
+            file_get_contents(__DIR__.'/files/test-file.txt'),
+            $cache->get(new GenericFile('fixtures://test-file.txt'), fn ($file, $path) => file_get_contents($path))
+        );
+        $this->assertTrue($cache->exists(new GenericFile('fixtures://test-file.txt')));
+
+        foreach (['get', 'exists'] as $method) {
+            try {
+                $cache->{$method}(new GenericFile('test://secret.txt'));
+                $this->fail("{$method}() read a disk that is not allowed.");
+            } catch (DiskNotAllowedException $exception) {
+                $this->assertSame('test', $exception->disk);
+                // Existing catch (HostNotAllowedException) blocks keep working.
+                $this->assertInstanceOf(HostNotAllowedException::class, $exception);
+            }
+        }
+
+        $this->assertFileDoesNotExist($this->getCachedPath('test://secret.txt'));
+    }
+
+    public function testEmptyAllowedDisksBlocksAllDisksButNotHttp()
+    {
+        $cache = $this->createCacheWithMockClient([new Response(200, [], 'remote')], ['allowed_disks' => []]);
+
+        $this->assertSame('remote', $cache->get(new GenericFile('https://example.com/a.txt'), fn ($file, $path) => file_get_contents($path)));
+
+        $this->expectException(DiskNotAllowedException::class);
+        $cache->get(new GenericFile('fixtures://test-file.txt'));
     }
 
     public function testGetRemoteWithAllowedHostsValidation()
