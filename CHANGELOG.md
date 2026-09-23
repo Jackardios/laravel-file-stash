@@ -2,11 +2,11 @@
 
 All notable changes to this package are documented in this file.
 
-## v5.0.0 — 2026-07-25
+## v5.0.0 — Unreleased
 
-Major rewrite of the concurrency core. For Laravel 10 / PHP 8.1 stay on v4.x.
-See the [Upgrading v4 → v5](README.md#upgrading-v4--v5) section of the README
-for the full migration guide, including how to switch workers over.
+Major rewrite of the concurrency core. Projects on Laravel 10/11 or
+PHP 8.1/8.2 stay on `^4.0`. See [UPGRADE.md](UPGRADE.md) for the migration
+steps, including how to switch workers over.
 
 ### Breaking: requirements
 
@@ -15,8 +15,8 @@ for the full migration guide, including how to switch workers over.
   security-fix window before this release and every 11.x version is affected
   by known security advisories, so it is not supported.
 - Dependency floors are the oldest versions without known security
-  advisories (Composer 2.9+ refuses to install insecure versions by
-  default): `illuminate/* ^12.61.1 || ^13.12`, `guzzlehttp/guzzle ^7.15.2 || ^8.0.1`,
+  advisories (Composer's default `audit.block-insecure` setting refuses
+  insecure versions): `illuminate/* ^12.61.1 || ^13.12`, `guzzlehttp/guzzle ^7.15.2 || ^8.0.1`,
   `symfony/finder ^7.2 || ^8`; PHPUnit 11–13.
 
 ### Breaking: write-protocol redesign
@@ -26,9 +26,10 @@ for the full migration guide, including how to switch workers over.
   downloads, the body streams into an exclusively locked temp file
   (`{hash}.{pid}.{random}.tmp`), and the entry is published with an atomic
   `rename()`. Readers can never observe a partially written file.
-- The cache directory now also contains `.locks/`, `.lifecycle.lock`, and
-  transient `*.tmp` files. `prune()` garbage-collects orphaned temp files
-  (after a 60 s grace period) and idle claim files; `clear()` removes them.
+- The cache directory now also contains `.locks/`, `.lifecycle.lock`,
+  `.pin.lock` and transient `*.tmp` files. `prune()` garbage-collects
+  orphaned temp files (after a 60 s grace period) and idle claim files;
+  `clear()` removes them.
 - The lifecycle lock moved from the system temp directory into the cache
   directory. v4 and v5 workers must not share a cache directory: stop the
   v4 workers and delete the directory (or use a new `path`) before
@@ -259,8 +260,11 @@ for the full migration guide, including how to switch workers over.
   concurrency`): cold-start stampede, prune vs. batch, once-vs-get races,
   writer crash recovery, lifecycle-lock contention, redirect integrity
   through real curl, and deferred-deletion races.
-- CI: PHP 8.2–8.5 × Laravel 12–13 matrix, prefer-lowest job, PHPStan level
-  max, Laravel Pint.
+- CI: PHP 8.3–8.5 × Laravel 12–13 (plus Guzzle 8) in random order,
+  parallel and sequential; prefer-lowest; PHPStan level max on the lowest
+  and highest dependency sets; Laravel Pint; `composer audit`; pcov
+  coverage and Infection mutation testing (97% MSI floor). Experimental
+  jobs: Windows, PHP 8.6, laravel/framework dev-master.
 
 ## v4.x
 

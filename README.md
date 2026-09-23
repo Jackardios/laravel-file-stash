@@ -90,7 +90,7 @@ Publish the config (optional):
 php artisan vendor:publish --tag=file-stash-config
 ```
 
-**Requirements:** PHP ^8.3, Laravel ^12 / ^13
+**Requirements:** PHP ^8.3, Laravel ^12.61.1 / ^13.12, Guzzle ^7.15.2 / ^8.0.1, a local POSIX filesystem (Linux, macOS; Windows is best-effort, see [Known Limitations](#known-limitations)). On Laravel 10/11 or PHP 8.1/8.2 use `^4.0`.
 
 ---
 
@@ -609,48 +609,15 @@ The fake is hermetic: it never downloads anything and never reads storage disks,
 - **flock has no fairness.** An exclusive waiter (`clear()`, a `getOnce()` cleanup) can be starved indefinitely by a continuous stream of shared readers on a very hot file. In practice the `lifecycle_lock_timeout` bounds the wait; design hot paths so `clear()` isn't racing them constantly.
 - **Chunked batches pause eviction** — while one runs, `prune()` deletes nothing; see [Batch + prune](#batch--prune).
 - **`block_private_hosts` cannot stop DNS rebinding** — curl re-resolves the hostname for the actual request. Use `allowed_hosts` as the primary SSRF defense.
+- **Windows is best-effort.** Downloads, MIME checks and locking work, and CI runs the fast suite on Windows, but the concurrency guarantees are only verified on POSIX systems. NTFS keeps a deleted file visible until its last handle closes, so the checks that detect an entry deleted or replaced under a reader do not fire, and `rename()` over an entry another process holds open can fail after its retries.
+- **Octane** runs every request in a clone of the application, so the `file-stash` singleton is built per request and `metrics()` covers that request only — unless you add `file-stash` to `octane.warm`, which shares one instance (and its metrics) across the worker's requests. Either way is safe: the instance holds no request state, and the lock registry is empty again after every call.
 - **`pcntl_fork()`**: the lifecycle-lock reentrancy registry is per process. A child forked while the parent holds a lifecycle lock shares the lock file descriptor with unpredictable results — don't fork mid-callback.
 
 ---
 
-## Upgrading v4 → v5
+## Upgrading from v4
 
-v5 is a major rewrite of the write protocol. For Laravel 10 / PHP 8.1 stay on v4.x.
-
-### Requirements
-
-- PHP `^8.3` (was `^8.1`), Laravel `^12 || ^13` (was `^10 || ^11 || ^12`). Laravel 11
-  is not supported: it left its security-fix window before this release, and every
-  11.x version is affected by known security advisories.
-
-### Behavior changes
-
-| Change | v4 | v5 |
-|---|---|---|
-| Write protocol | `LOCK_EX` on the final path while writing | claim lock + exclusively locked temp file + atomic `rename()` |
-| Cache directory contents | entries only | also `.locks/` (claim files), `.lifecycle.lock`, transient `*.tmp` |
-| Lifecycle lock location | system temp dir | inside the cache directory |
-| `timeout` default | `-1` (unlimited) | `300` seconds |
-| `user_agent` default | `Laravel-FileStash/4.x` | `Laravel-FileStash/5.x` |
-| Prune command | `prune-file-stash` | `file-stash:prune` (old name is a deprecated alias) |
-| Invalid config values | silently coerced (e.g. a string `mime_types` disabled the whitelist!) | throw `InvalidConfigurationException` |
-| `read_timeout` for HTTP | `stream_set_timeout` on the response stream | curl low-speed abort; HTTP timeouts surface as Guzzle exceptions |
-| `exists()` with a MIME whitelist and no `Content-Type` header | allowed | denied (deny-by-default, matches disk behavior) |
-| `exists()` on 429 / 5xx | `false` | throws `FailedToRetrieveFileException` (4xx and unresolved 3xx still return `false`) |
-| `forget()` / once-cleanup vs. running batches | racy | excluded by the lifecycle lock; nested inside a batch callback the deletion is deferred until the batch ends |
-| `CacheMiss` event | `$file`, `$url` | `$file` only (`$url` was a duplicate of `$file->getUrl()`) |
-| `app(FileStash::class)` | created a second instance | aliased to the `file-stash` singleton |
-| `FileStash::fake()` | no-op stub, no real files | creates real files, records calls, provides `assert*()` helpers |
-| Events | plain classes | `final readonly` |
-
-Standalone (non-Laravel) construction now requires an explicit absolute `path` in the config array, and `disk://` URLs require passing a `FilesystemManager` to the constructor.
-
-### Switching workers over
-
-v4 and v5 use different lock protocols and **must not** work on the same cache directory at the same time (a v5 reader could serve a file that a v4 writer has only just created, and v4 `clear()`/`prune()` would not see v5's locks). Either:
-
-- stop all v4 workers, delete the cache directory (v4 may have left zero-length files behind, which v5 serves as valid empty entries), then start the v5 workers; or
-- point v5 at a new `path` and delete the old directory once the last v4 worker is gone.
+See [UPGRADE.md](UPGRADE.md). Projects on Laravel 10/11 or PHP 8.1/8.2 stay on `^4.0`.
 
 ---
 
