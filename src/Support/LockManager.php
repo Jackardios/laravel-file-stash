@@ -46,7 +46,9 @@ final class LockManager
      * Try to acquire a flock, retrying non-blocking attempts until the timeout.
      *
      * The success check always happens before the deadline check, so a lock that
-     * can be acquired immediately succeeds even with a timeout of 0.
+     * can be acquired immediately succeeds even with a timeout of 0. Only
+     * contention is waited out: a failure that is not EWOULDBLOCK (a stream
+     * or filesystem without flock support) returns false right away.
      *
      * @param  resource  $stream
      * @param  int<0, 3>  $operation  LOCK_SH or LOCK_EX
@@ -54,22 +56,26 @@ final class LockManager
      */
     public static function flockWithTimeout($stream, int $operation, float $timeout): bool
     {
-        if ($timeout < 0) {
-            // Indefinite wait: let the kernel block us instead of polling.
-            // flock() can still return early on signal delivery (EINTR), so
-            // it is retried until it succeeds.
-            while (! flock($stream, $operation)) {
-                usleep(random_int(self::LOCK_RETRY_DELAY_MIN_US, self::LOCK_RETRY_DELAY_MAX_US));
-            }
-
-            return true;
-        }
-
         $startTime = microtime(true);
 
         while (true) {
-            if (flock($stream, $operation | LOCK_NB)) {
+            if (flock($stream, $operation | LOCK_NB, $wouldBlock)) {
                 return true;
+            }
+
+            if ($wouldBlock !== 1) {
+                return false;
+            }
+
+            if ($timeout < 0) {
+                // Indefinite wait: let the kernel block us instead of
+                // polling. An early return (EINTR on signal delivery) loops
+                // back to the probe above.
+                if (flock($stream, $operation)) {
+                    return true;
+                }
+
+                continue;
             }
 
             if ((microtime(true) - $startTime) >= $timeout) {

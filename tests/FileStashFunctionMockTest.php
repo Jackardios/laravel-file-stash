@@ -16,6 +16,7 @@ use Jackardios\FileStash\Exceptions\SourceResourceTimedOutException;
 use Jackardios\FileStash\FileStash;
 use Jackardios\FileStash\GenericFile;
 use phpmock\phpunit\PHPMock;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\TestCase;
 
@@ -400,13 +401,15 @@ class FileStashFunctionMockTest extends TestCase
         // would get a fresh 0.2 s budget (~0.75 s total here).
         $roundStart = null;
         $flockMock = $this->getFunctionMock('Jackardios\\FileStash\\Support', 'flock');
-        $flockMock->expects($this->atLeastOnce())->willReturnCallback(function ($stream, $operation) use (&$roundStart, $claimPath) {
+        $flockMock->expects($this->atLeastOnce())->willReturnCallback(function ($stream, $operation, &$wouldBlock = null) use (&$roundStart, $claimPath) {
             if (($operation & LOCK_EX) === 0) {
-                return \flock($stream, $operation);
+                return \flock($stream, $operation, $wouldBlock);
             }
 
             $roundStart ??= microtime(true);
             if (microtime(true) - $roundStart < 0.15) {
+                $wouldBlock = 1;
+
                 return false;
             }
 
@@ -432,13 +435,18 @@ class FileStashFunctionMockTest extends TestCase
         );
     }
 
-    public function testGetWaitsForLockReleaseWhenNotThrowing()
+    /**
+     * A bounded lock_wait_timeout polls with a sleep between attempts; the
+     * indefinite one (-1) blocks in the kernel and never sleeps.
+     */
+    #[DataProvider('lockWaitProvider')]
+    public function testGetWaitsForLockReleaseWhenNotThrowing(float $lockWaitTimeout, int $expectedSleeps)
     {
         $url = 'fixtures://test-file.txt';
         $file = new GenericFile($url);
         $cachedPath = $this->getCachedPath($url);
 
-        $cache = $this->createCacheWithMockFixtures();
+        $cache = $this->createCacheWithMockFixtures(['lock_wait_timeout' => $lockWaitTimeout]);
 
         // Simulate: Another process already wrote the file and holds LOCK_EX
         copy(__DIR__.'/files/test-file.txt', $cachedPath);
@@ -455,7 +463,7 @@ class FileStashFunctionMockTest extends TestCase
 
         $flockMock->expects($this->atLeast($maxAttemptsBeforeSuccess + 1))
             ->willReturnCallback(
-                function ($handle, $operation) use (&$lockAttempt, $maxAttemptsBeforeSuccess, &$writingProcessHandle, $cachedPath, &$sharedLockHandle) {
+                function ($handle, $operation, &$wouldBlock = null) use (&$lockAttempt, $maxAttemptsBeforeSuccess, &$writingProcessHandle, $cachedPath, &$sharedLockHandle) {
                     $meta = stream_get_meta_data($handle);
                     if ($meta['uri'] === $cachedPath && $meta['mode'] === 'rb') {
                         $sharedLockHandle = $handle;
@@ -464,6 +472,8 @@ class FileStashFunctionMockTest extends TestCase
                     if ($handle === $sharedLockHandle && ($operation === (LOCK_SH | LOCK_NB) || $operation === LOCK_SH)) {
                         $lockAttempt++;
                         if ($lockAttempt <= $maxAttemptsBeforeSuccess) {
+                            $wouldBlock = 1;
+
                             return false;
                         }
                         if (is_resource($writingProcessHandle)) {
@@ -480,7 +490,7 @@ class FileStashFunctionMockTest extends TestCase
             );
 
         $usleepMock = $this->getFunctionMock('Jackardios\\FileStash\\Support', 'usleep');
-        $usleepMock->expects($this->exactly($maxAttemptsBeforeSuccess));
+        $usleepMock->expects($this->exactly($expectedSleeps));
 
         $resultPath = $cache->get($file, $this->noop, false);
 
@@ -495,6 +505,14 @@ class FileStashFunctionMockTest extends TestCase
             \flock($writingProcessHandle, LOCK_UN);
             fclose($writingProcessHandle);
         }
+    }
+
+    public static function lockWaitProvider(): array
+    {
+        return [
+            'bounded (polls)' => [5.0, 3],
+            'indefinite (blocks)' => [-1.0, 0],
+        ];
     }
 
     public function testBatchChunkingClosesCachedStreamsBeforeCallback()
@@ -579,7 +597,11 @@ class FileStashFunctionMockTest extends TestCase
 
         // The lifecycle lock acquisition lives in LockManager (Support namespace).
         $flockMock = $this->getFunctionMock('Jackardios\\FileStash\\Support', 'flock');
-        $flockMock->expects($this->atLeastOnce())->willReturn(false);
+        $flockMock->expects($this->atLeastOnce())->willReturnCallback(function ($stream, $operation, &$wouldBlock = null) {
+            $wouldBlock = 1;
+
+            return false;
+        });
 
         $this->expectException(LifecycleLockTimeoutException::class);
         $this->expectExceptionMessage('lifecycle lock');

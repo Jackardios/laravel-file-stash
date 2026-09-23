@@ -226,6 +226,10 @@ for the full migration guide, including how to switch workers over.
 - `cache:clear` / `optimize:clear` no longer fail when the file stash's
   lifecycle lock is busy (a warning is logged instead), and a tag-scoped
   `cache:clear --tags=...` no longer wipes the file stash.
+- A lock stream without `flock()` support (unsupported filesystem or
+  stream wrapper) fails immediately instead of being treated as contended:
+  with an indefinite timeout (`-1`) the lock loop used to spin forever.
+  Indefinite waits now block in the kernel instead of polling.
 - Numerous smaller correctness fixes: dead code paths removed, per-URL path
   cache removed, `fflush()` before MIME checks and publishing, Windows
   rename retries.

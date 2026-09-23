@@ -5,6 +5,7 @@ namespace Jackardios\FileStash\Tests\Support;
 use Jackardios\FileStash\Exceptions\LifecycleLockTimeoutException;
 use Jackardios\FileStash\Support\LockManager;
 use LogicException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -22,6 +23,38 @@ class LockManagerTest extends TestCase
     {
         @unlink($this->lockPath);
         parent::tearDown();
+    }
+
+    /**
+     * A stream without flock support must fail fast, not spin forever (or
+     * poll until the timeout) as if the lock were merely contended.
+     */
+    #[DataProvider('timeoutProvider')]
+    public function testFlockWithTimeoutFailsFastWithoutFlockSupport(float $timeout): void
+    {
+        $stream = fopen('php://memory', 'r+');
+        $start = microtime(true);
+
+        $this->assertFalse(LockManager::flockWithTimeout($stream, LOCK_SH, $timeout));
+        $this->assertLessThan(1.0, microtime(true) - $start);
+    }
+
+    public static function timeoutProvider(): array
+    {
+        return ['indefinite' => [-1.0], 'bounded' => [5.0]];
+    }
+
+    public function testFlockWithTimeoutWaitsIndefinitelyForContendedLock(): void
+    {
+        $foreign = fopen($this->lockPath, 'c+');
+        $this->assertTrue(flock($foreign, LOCK_EX | LOCK_NB));
+        $own = fopen($this->lockPath, 'c+');
+
+        $this->assertFalse(LockManager::flockWithTimeout($own, LOCK_SH, 0.0));
+
+        fclose($foreign);
+        $this->assertTrue(LockManager::flockWithTimeout($own, LOCK_SH, -1.0));
+        fclose($own);
     }
 
     public function testHeldLifecycleTypeReflectsCurrentFrame(): void
