@@ -135,8 +135,10 @@ for the full migration guide, including how to switch workers over.
 - Security-critical request options (timeouts, `max_redirects`, the
   `on_redirect` host validation, the curl low-speed abort) are now applied
   **per request**, so an injected Guzzle client cannot silently disable
-  them. Note: a per-request `curl` option array shallow-replaces a
-  client-config `curl` array (Guzzle semantics).
+  them. The client's own `curl` options and redirect settings
+  (`protocols`, `strict`, `referer`, `track_redirects`) are merged in,
+  not dropped, and its own `on_redirect` callback runs after the host
+  validation passed.
 - Retry backoff applies jitter before the 30 s clamp, so the ceiling is a
   hard bound on the actual sleep (the sleep holds the entry claim and the
   shared lifecycle lock).

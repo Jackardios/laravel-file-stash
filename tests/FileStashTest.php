@@ -36,7 +36,6 @@ use Jackardios\FileStash\Support\DeleteResult;
 use Jackardios\FileStash\Testing\FileStashFake;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Http\Message\RequestInterface;
-use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\UriInterface;
 use ReflectionMethod;
 
@@ -144,6 +143,28 @@ class FileStashTest extends TestCase
         $fetcher = $fetcherProperty->getValue($cache);
 
         return (new ReflectionMethod($fetcher, 'client'))->invoke($fetcher)->getConfig();
+    }
+
+    /**
+     * The options the cache passes to the HTTP handler for a request (after
+     * Guzzle merged them with the client config), captured from a HEAD.
+     */
+    protected function captureRequestOptions(array $config = []): array
+    {
+        $captured = [];
+        $stack = HandlerStack::create(new MockHandler([new Response(200)]));
+        $stack->push(function (callable $handler) use (&$captured) {
+            return function (RequestInterface $request, array $options) use ($handler, &$captured) {
+                $captured = $options;
+
+                return $handler($request, $options);
+            };
+        });
+
+        $cache = new FileStash(array_merge(['path' => $this->cachePath], $config), new Client(['handler' => $stack]));
+        $cache->exists(new GenericFile('https://files/image.jpg'));
+
+        return $captured;
     }
 
     public function testGetExists()
@@ -1840,15 +1861,12 @@ class FileStashTest extends TestCase
         $this->assertEquals('TestAgent/1.0', $config['headers']['User-Agent']);
     }
 
-    public function testGuzzleClientHasMaxRedirects()
+    public function testRequestsHaveMaxRedirects()
     {
-        $cache = $this->createCache(['max_redirects' => 3]);
-        $config = $this->getClientConfig($cache);
+        $options = $this->captureRequestOptions(['max_redirects' => 3]);
 
-        $this->assertArrayHasKey('allow_redirects', $config);
-        $this->assertEquals(3, $config['allow_redirects']['max']);
-        $this->assertArrayHasKey('on_redirect', $config['allow_redirects']);
-        $this->assertIsCallable($config['allow_redirects']['on_redirect']);
+        $this->assertSame(3, $options['allow_redirects']['max']);
+        $this->assertIsCallable($options['allow_redirects']['on_redirect']);
     }
 
     public function testAllowedHostsEmptyStringAllowsAllHosts()
@@ -2481,83 +2499,64 @@ class FileStashTest extends TestCase
     // makeHttpClient — timeout configuration
     // =========================================================================
 
-    public function testGuzzleClientHasTimeoutSettings()
+    public function testRequestsHaveTimeoutSettings()
     {
-        $cache = $this->createCache([
+        $options = $this->captureRequestOptions([
             'timeout' => 30,
             'connect_timeout' => 10,
             'read_timeout' => 15,
         ]);
-        $config = $this->getClientConfig($cache);
 
-        $this->assertEquals(30, $config['timeout']);
-        $this->assertEquals(10, $config['connect_timeout']);
-        $this->assertFalse($config['http_errors']);
+        $this->assertEquals(30, $options['timeout']);
+        $this->assertEquals(10, $options['connect_timeout']);
 
         // read_timeout maps to curl's low-speed abort (stall timeout)
-        $this->assertArrayHasKey('curl', $config);
-        $this->assertSame(1, $config['curl'][CURLOPT_LOW_SPEED_LIMIT]);
-        $this->assertSame(15, $config['curl'][CURLOPT_LOW_SPEED_TIME]);
+        $this->assertSame(1, $options['curl'][CURLOPT_LOW_SPEED_LIMIT]);
+        $this->assertSame(15, $options['curl'][CURLOPT_LOW_SPEED_TIME]);
     }
 
-    public function testGuzzleClientRoundsUpFractionalReadTimeoutForCurl()
+    public function testDefaultClientDoesNotThrowOnHttpErrors()
     {
-        $cache = $this->createCache(['read_timeout' => 0.5]);
-        $config = $this->getClientConfig($cache);
+        $this->assertFalse($this->getClientConfig($this->createCache())['http_errors']);
+    }
+
+    public function testRequestsRoundUpFractionalReadTimeoutForCurl()
+    {
+        $options = $this->captureRequestOptions(['read_timeout' => 0.5]);
 
         // Sub-second stall timeouts are rounded up to curl's 1-second minimum
-        $this->assertSame(1, $config['curl'][CURLOPT_LOW_SPEED_TIME]);
+        $this->assertSame(1, $options['curl'][CURLOPT_LOW_SPEED_TIME]);
     }
 
-    public function testGuzzleClientClampsNegativeTimeoutsToZero()
+    public function testRequestsClampNegativeTimeoutsToZero()
     {
-        $cache = $this->createCache([
+        $options = $this->captureRequestOptions([
             'timeout' => -1,
             'connect_timeout' => -1,
             'read_timeout' => -1,
         ]);
-        $config = $this->getClientConfig($cache);
 
-        $this->assertEquals(0, $config['timeout']);
-        $this->assertEquals(0, $config['connect_timeout']);
+        $this->assertEquals(0, $options['timeout']);
+        $this->assertEquals(0, $options['connect_timeout']);
 
         // read_timeout=-1 disables the curl low-speed abort entirely
-        $this->assertArrayNotHasKey('curl', $config);
+        $this->assertArrayNotHasKey('curl', $options);
     }
 
     // =========================================================================
     // SSRF Redirect Protection Tests
     // =========================================================================
 
-    public function testOnRedirectBlocksDisallowedHost()
+    public function testRedirectToAllowedHostIsFollowed()
     {
-        $cache = $this->createCache(['allowed_hosts' => ['example.com']]);
-        $config = $this->getClientConfig($cache);
-        $onRedirect = $config['allow_redirects']['on_redirect'];
+        $cache = $this->createCacheWithMockClient([
+            new Response(302, ['Location' => 'https://cdn.example.com/final.jpg']),
+            new Response(200, [], 'final body'),
+        ], ['allowed_hosts' => ['example.com', '*.example.com']]);
 
-        $request = $this->createStub(RequestInterface::class);
-        $response = $this->createStub(ResponseInterface::class);
-        $uri = $this->createStub(UriInterface::class);
-        $uri->method('__toString')->willReturn('https://evil.com/malicious');
+        $content = $cache->get(new GenericFile('https://example.com/image.jpg'), fn ($file, $path) => file_get_contents($path));
 
-        $this->expectException(HostNotAllowedException::class);
-        $onRedirect($request, $response, $uri);
-    }
-
-    public function testOnRedirectAllowsAllowedHost()
-    {
-        $cache = $this->createCache(['allowed_hosts' => ['example.com']]);
-        $config = $this->getClientConfig($cache);
-        $onRedirect = $config['allow_redirects']['on_redirect'];
-
-        $request = $this->createStub(RequestInterface::class);
-        $response = $this->createStub(ResponseInterface::class);
-        $uri = $this->createStub(UriInterface::class);
-        $uri->method('__toString')->willReturn('https://example.com/redirect-target');
-
-        // Should not throw
-        $onRedirect($request, $response, $uri);
-        $this->assertTrue(true);
+        $this->assertSame('final body', $content);
     }
 
     // =========================================================================
@@ -2659,7 +2658,83 @@ class FileStashTest extends TestCase
         }
     }
 
-    public function testInjectedClientRedirectToDisallowedHostIsBlocked()
+    public function testInjectedClientCurlAndRedirectSettingsAreMergedNotReplaced()
+    {
+        // Guzzle shallow-merges request options over client options: without
+        // an explicit merge, the per-request `curl` and `allow_redirects`
+        // arrays would silently drop the injected client's own settings.
+        $captured = [];
+        $clientRedirects = [];
+        $mock = new MockHandler([
+            new Response(302, ['Location' => 'https://files/final.jpg']),
+            new Response(200, [], $this->getTestImageContent()),
+        ]);
+        $stack = HandlerStack::create($mock);
+        $stack->push(function (callable $handler) use (&$captured) {
+            return function (RequestInterface $request, array $options) use ($handler, &$captured) {
+                $captured[] = $options;
+
+                return $handler($request, $options);
+            };
+        });
+
+        $cache = new FileStash([
+            'path' => $this->cachePath,
+            'read_timeout' => 15,
+            'max_redirects' => 3,
+            'allowed_hosts' => ['files'],
+        ], new Client([
+            'handler' => $stack,
+            'curl' => [CURLOPT_LOW_SPEED_TIME => 99, CURLOPT_SSL_VERIFYSTATUS => true],
+            'allow_redirects' => [
+                'max' => 10,
+                'protocols' => ['https'],
+                'on_redirect' => function ($request, $response, UriInterface $uri) use (&$clientRedirects) {
+                    $clientRedirects[] = (string) $uri;
+                },
+            ],
+        ]));
+
+        $cache->get(new GenericFile('https://files/image.jpg'), $this->noop);
+
+        $options = $captured[0];
+        $this->assertTrue($options['curl'][CURLOPT_SSL_VERIFYSTATUS]);
+        $this->assertSame(1, $options['curl'][CURLOPT_LOW_SPEED_LIMIT]);
+        $this->assertSame(15, $options['curl'][CURLOPT_LOW_SPEED_TIME]);
+        $this->assertSame(3, $options['allow_redirects']['max']);
+        $this->assertSame(['https'], $options['allow_redirects']['protocols']);
+        $this->assertSame(['https://files/final.jpg'], $clientRedirects);
+    }
+
+    public function testInjectedClientOnRedirectRunsOnlyAfterHostValidation()
+    {
+        $clientRedirects = [];
+        $mock = new MockHandler([
+            new Response(301, ['Location' => 'https://evil.com/steal']),
+        ]);
+
+        $cache = new FileStash([
+            'path' => $this->cachePath,
+            'allowed_hosts' => ['files'],
+        ], new Client([
+            'handler' => HandlerStack::create($mock),
+            'allow_redirects' => [
+                'on_redirect' => function ($request, $response, UriInterface $uri) use (&$clientRedirects) {
+                    $clientRedirects[] = (string) $uri;
+                },
+            ],
+        ]));
+
+        try {
+            $cache->get(new GenericFile('https://files/image.jpg'), $this->noop);
+            $this->fail('Expected HostNotAllowedException to be thrown.');
+        } catch (HostNotAllowedException) {
+        }
+
+        $this->assertSame([], $clientRedirects);
+    }
+
+    public function testRedirectToDisallowedHostIsBlocked()
     {
         $mock = new MockHandler([
             new Response(301, ['Location' => 'https://evil.com/steal'], ''),

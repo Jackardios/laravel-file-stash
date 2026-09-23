@@ -344,9 +344,11 @@ class RemoteFetcher
      * makeClient) so that an injected client is still subject to the
      * configured timeouts, the redirect budget, and — most importantly — the
      * on_redirect host validation; per-request options win over client
-     * config (Guzzle shallow-merges them). Note that a per-request `curl`
-     * array shallow-REPLACES a client-config `curl` array rather than
-     * merging with it.
+     * config (Guzzle shallow-merges them). The `curl` and `allow_redirects`
+     * arrays would therefore REPLACE an injected client's own arrays, so
+     * they are merged explicitly: the client's other curl options and
+     * redirect settings (protocols, referer, ...) survive, and its own
+     * on_redirect callback runs after the host validation passed.
      *
      * `read_timeout` maps to curl's low-speed abort (CURLOPT_LOW_SPEED_*): the
      * transfer fails when it stalls below 1 byte/s for that many seconds. The
@@ -356,36 +358,72 @@ class RemoteFetcher
      * @return array{
      *   timeout: float,
      *   connect_timeout: float,
-     *   allow_redirects: array{max: int, on_redirect: Closure(RequestInterface, ResponseInterface, UriInterface): void},
-     *   curl?: array<int, int>
+     *   allow_redirects: array{
+     *     max: int,
+     *     on_redirect: Closure(RequestInterface, ResponseInterface, UriInterface): void,
+     *     strict?: bool,
+     *     referer?: bool,
+     *     protocols?: non-empty-array<array-key, string>,
+     *     track_redirects?: bool
+     *   },
+     *   curl?: array<array-key, mixed>
      * }
      */
     protected function requestOptions(): array
     {
+        $clientRedirects = $this->clientOption('allow_redirects');
+        $clientOnRedirect = $clientRedirects['on_redirect'] ?? null;
+        /** @var array{strict?: bool, referer?: bool, protocols?: non-empty-array<array-key, string>, track_redirects?: bool} $inherited Guzzle's documented shape of these client options. */
+        $inherited = array_intersect_key($clientRedirects, array_flip(['strict', 'referer', 'protocols', 'track_redirects']));
+
         $options = [
             'timeout' => max($this->config['timeout'], 0),
             'connect_timeout' => max($this->config['connect_timeout'], 0),
             'allow_redirects' => [
+                ...$inherited,
                 'max' => $this->config['max_redirects'],
                 'on_redirect' => function (
                     RequestInterface $request,
                     ResponseInterface $response,
                     UriInterface $uri
-                ): void {
+                ) use ($clientOnRedirect): void {
                     $this->hostValidator->validate((string) $uri);
+
+                    if (is_callable($clientOnRedirect)) {
+                        $clientOnRedirect($request, $response, $uri);
+                    }
                 },
             ],
         ];
 
+        $curl = $this->clientOption('curl');
         $readTimeout = $this->config['read_timeout'];
         if ($readTimeout >= 0) {
-            $options['curl'] = [
+            // Not a spread: it would renumber the integer CURLOPT_* keys.
+            $curl = [
                 \CURLOPT_LOW_SPEED_LIMIT => 1,
                 \CURLOPT_LOW_SPEED_TIME => max(1, (int) ceil($readTimeout)),
-            ];
+            ] + $curl;
+        }
+
+        if ($curl !== []) {
+            $options['curl'] = $curl;
         }
 
         return $options;
+    }
+
+    /**
+     * An array option of the client's config ([] when absent or not an
+     * array, and before the default client is built).
+     *
+     * @return array<array-key, mixed>
+     */
+    protected function clientOption(string $name): array
+    {
+        $value = $this->client?->getConfig($name);
+
+        return is_array($value) ? $value : [];
     }
 
     /**
@@ -398,12 +436,15 @@ class RemoteFetcher
     }
 
     /**
-     * Create the Guzzle HTTP client.
+     * Create the default Guzzle HTTP client.
+     *
+     * Timeouts and redirect handling are not client defaults: requestOptions()
+     * applies them to every request, and clientOption() would otherwise read
+     * them back from this client and chain our on_redirect onto itself.
      */
     protected function makeClient(): Client
     {
         return new Client([
-            ...$this->requestOptions(),
             'http_errors' => false,
             'headers' => [
                 'User-Agent' => $this->config['user_agent'],
