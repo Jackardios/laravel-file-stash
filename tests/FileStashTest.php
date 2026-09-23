@@ -2015,33 +2015,28 @@ class FileStashTest extends TestCase
         $this->assertNotEmpty($path);
     }
 
-    public function testHttpRetryUsesExponentialBackoff()
+    /**
+     * The copy limit is max_file_size + 1 (one byte over proves "too
+     * large"); at PHP_INT_MAX that would overflow into a float.
+     */
+    #[DataProvider('sourceProvider')]
+    public function testMaxFileSizeOfPhpIntMaxDoesNotOverflow(string $url)
     {
-        // Verify retry works with multiple failures followed by success
-        $cache = $this->createCacheWithMockClient([
-            new Response(503),
-            new Response(503),
-            new Response(200, [], $this->getTestImageContent()),
-        ], [
-            'http_retries' => 2,
-            'http_retry_delay' => 1, // 1ms base delay to keep test fast
-        ]);
-
-        $file = new GenericFile('https://example.com/image.jpg');
-        $path = $cache->get($file, $this->noop);
-        $this->assertNotEmpty($path);
-    }
-
-    public function testCopyStreamWithSizeLimitHandlesPhpIntMax()
-    {
-        // With max_file_size set to PHP_INT_MAX, should not overflow
         $cache = $this->createCacheWithMockClient([
             new Response(200, [], $this->getTestImageContent()),
         ], ['max_file_size' => PHP_INT_MAX]);
 
-        $file = new GenericFile('https://example.com/image.jpg');
-        $path = $cache->get($file, $this->noop);
-        $this->assertFileExists($path);
+        $path = $cache->get(new GenericFile($url));
+
+        $this->assertFileEquals(__DIR__.'/files/test-image.jpg', $path);
+    }
+
+    public static function sourceProvider(): array
+    {
+        return [
+            'storage disk' => ['fixtures://test-image.jpg'],
+            'http' => ['https://example.com/image.jpg'],
+        ];
     }
 
     // =========================================================================

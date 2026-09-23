@@ -571,6 +571,55 @@ class FileStashFunctionMockTest extends TestCase
         $this->assertSame('fresh', $content);
     }
 
+    public function testHttpRetryBackoffDoublesPerAttemptWithinJitterAndCeiling()
+    {
+        // At the upper jitter bound (x1.5) a 100 ms base delay doubles per
+        // attempt: 150, 300, 600 ms.
+        $sleeps = [];
+        $this->getFunctionMock('Jackardios\\FileStash\\Http', 'usleep')
+            ->expects($this->exactly(3))
+            ->willReturnCallback(function (int $microseconds) use (&$sleeps) {
+                $sleeps[] = $microseconds;
+            });
+        $this->getFunctionMock('Jackardios\\FileStash\\Http', 'random_int')
+            ->expects($this->exactly(3))
+            ->willReturnCallback(fn (int $min, int $max) => $max);
+
+        $mock = new MockHandler([new Response(503), new Response(503), new Response(503), new Response(200, [], 'ok')]);
+        $cache = new FileStash(
+            ['path' => $this->cachePath, 'http_retries' => 3, 'http_retry_delay' => 100],
+            new Client(['handler' => HandlerStack::create($mock)])
+        );
+
+        $cache->get(new GenericFile('https://files/a.txt'), $this->noop);
+
+        $this->assertSame([150_000, 300_000, 600_000], $sleeps);
+    }
+
+    public function testHttpRetryBackoffNeverExceedsTheCeiling()
+    {
+        $sleeps = [];
+        $this->getFunctionMock('Jackardios\\FileStash\\Http', 'usleep')
+            ->expects($this->once())
+            ->willReturnCallback(function (int $microseconds) use (&$sleeps) {
+                $sleeps[] = $microseconds;
+            });
+        $this->getFunctionMock('Jackardios\\FileStash\\Http', 'random_int')
+            ->expects($this->once())
+            ->willReturnCallback(fn (int $min, int $max) => $max);
+
+        $mock = new MockHandler([new Response(503), new Response(200, [], 'ok')]);
+        $cache = new FileStash(
+            ['path' => $this->cachePath, 'http_retries' => 1, 'http_retry_delay' => 50_000],
+            new Client(['handler' => HandlerStack::create($mock)])
+        );
+
+        $cache->get(new GenericFile('https://files/a.txt'), $this->noop);
+
+        // 50 s base, jitter up to 75 s: the 30 s ceiling applies after jitter.
+        $this->assertSame([30_000_000], $sleeps);
+    }
+
     public function testLifecycleLockTimeout()
     {
         $cache = $this->createCacheWithMockFixtures([
