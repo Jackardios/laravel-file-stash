@@ -2,98 +2,73 @@
 
 namespace Jackardios\FileStash\Tests\Console\Commands;
 
-use Jackardios\FileStash\Console\Commands\PruneFileStash;
 use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
 use Jackardios\FileStash\Tests\TestCase;
 
 class PruneFileStashTest extends TestCase
 {
-    public function testPruneSuccessOutput()
+    protected function tearDown(): void
+    {
+        // symfony/console < 7.3.3 leaks the verbosity of --silent/--quiet runs
+        // into the environment of the whole process.
+        putenv('SHELL_VERBOSITY');
+        unset($_ENV['SHELL_VERBOSITY'], $_SERVER['SHELL_VERBOSITY']);
+
+        parent::tearDown();
+    }
+
+    /**
+     * @param  array{completed: bool, deleted: int, remaining: int, total_size: int}  $stats
+     */
+    protected function fakePruneStats(array $stats): void
     {
         $mock = $this->createStub(FileStashContract::class);
-        $mock->method('prune')->willReturn([
-            'completed' => true,
-            'deleted' => 3,
-            'remaining' => 10,
-            'total_size' => 2048,
-        ]);
+        $mock->method('prune')->willReturn($stats);
 
         $this->app->instance('file-stash', $mock);
+    }
+
+    public function testPruneSuccessOutput()
+    {
+        $this->fakePruneStats(['completed' => true, 'deleted' => 3, 'remaining' => 10, 'total_size' => 2048]);
 
         $this->artisan('file-stash:prune')
             ->expectsOutput('File cache pruned successfully.')
             ->expectsOutput('  Deleted: 3 files')
             ->expectsOutput('  Remaining: 10 files')
+            ->expectsOutput('  Total size: 2.00 KB')
             ->assertExitCode(0);
     }
 
     public function testPruneTimeoutOutput()
     {
-        $mock = $this->createStub(FileStashContract::class);
-        $mock->method('prune')->willReturn([
-            'completed' => false,
-            'deleted' => 1,
-            'remaining' => 50,
-            'total_size' => 4096,
-        ]);
-
-        $this->app->instance('file-stash', $mock);
+        $this->fakePruneStats(['completed' => false, 'deleted' => 1, 'remaining' => 50, 'total_size' => 1073741824]);
 
         $this->artisan('file-stash:prune')
             ->expectsOutput('Prune operation did not complete (timed out).')
             ->expectsOutput('  Deleted: 1 files')
+            ->expectsOutput('  Remaining: 50 files')
+            ->expectsOutput('  Total size: 1.00 GB')
             ->assertExitCode(0);
     }
 
     public function testPruneSilentSuppressesOutput()
     {
-        $mock = $this->createStub(FileStashContract::class);
-        $mock->method('prune')->willReturn([
-            'completed' => true,
-            'deleted' => 2,
-            'remaining' => 5,
-            'total_size' => 1024,
-        ]);
-
-        $this->app->instance('file-stash', $mock);
+        $this->fakePruneStats(['completed' => true, 'deleted' => 2, 'remaining' => 5, 'total_size' => 1024]);
 
         $this->artisan('file-stash:prune --silent')
-            ->doesntExpectOutput('File cache pruned successfully.')
-            ->doesntExpectOutput('Prune operation did not complete (timed out).')
+            ->doesntExpectOutput()
             ->assertExitCode(0);
     }
 
     public function testDeprecatedCommandAliasStillWorks()
     {
-        $mock = $this->createStub(FileStashContract::class);
-        $mock->method('prune')->willReturn([
-            'completed' => true,
-            'deleted' => 0,
-            'remaining' => 0,
-            'total_size' => 0,
-        ]);
-
-        $this->app->instance('file-stash', $mock);
+        $this->fakePruneStats(['completed' => true, 'deleted' => 0, 'remaining' => 0, 'total_size' => 0]);
 
         // Old v4 name is kept as an alias until v6.
         $this->artisan('prune-file-stash')
             ->expectsOutput('File cache pruned successfully.')
+            ->expectsOutput('  Total size: 0 B')
             ->assertExitCode(0);
-    }
-
-    public function testFormatBytesZero()
-    {
-        $command = new PruneFileStash;
-        $method = new \ReflectionMethod($command, 'formatBytes');
-
-        $this->assertEquals('0 B', $method->invoke($command, 0));
-    }
-
-    public function testFormatBytesGigabyte()
-    {
-        $command = new PruneFileStash;
-        $method = new \ReflectionMethod($command, 'formatBytes');
-
-        $this->assertEquals('1.00 GB', $method->invoke($command, 1073741824));
     }
 }

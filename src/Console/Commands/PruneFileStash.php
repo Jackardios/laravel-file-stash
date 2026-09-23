@@ -12,7 +12,7 @@ class PruneFileStash extends Command
      *
      * @var string
      */
-    protected $signature = 'file-stash:prune {--silent : Suppress output}';
+    protected $signature = 'file-stash:prune';
 
     /**
      * The console command description.
@@ -36,16 +36,15 @@ class PruneFileStash extends Command
     {
         $stats = $cache->prune();
 
-        if (! $this->option('silent')) {
-            if (! $stats['completed']) {
-                $this->warn('Prune operation did not complete (timed out).');
-            } else {
-                $this->info('File cache pruned successfully.');
-            }
-            $this->line("  Deleted: {$stats['deleted']} files");
-            $this->line("  Remaining: {$stats['remaining']} files");
-            $this->line('  Total size: '.$this->formatBytes($stats['total_size']));
+        // Symfony's global --silent/--quiet options suppress all of this.
+        if (! $stats['completed']) {
+            $this->warn('Prune operation did not complete (timed out).');
+        } else {
+            $this->info('File cache pruned successfully.');
         }
+        $this->line("  Deleted: {$stats['deleted']} files");
+        $this->line("  Remaining: {$stats['remaining']} files");
+        $this->line('  Total size: '.$this->formatBytes($stats['total_size']));
 
         return self::SUCCESS;
     }
