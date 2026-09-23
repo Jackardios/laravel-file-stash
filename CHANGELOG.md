@@ -179,6 +179,9 @@ for the full migration guide, including how to switch workers over.
   `CacheFileEvicted` events or bumps the eviction metric.
 - `GenericFile` rejects URLs with an empty scheme or empty path
   (`'://x'`, `'disk://'`) at construction.
+- `cache:clear` / `optimize:clear` no longer fail when the file stash's
+  lifecycle lock is busy (a warning is logged instead), and a tag-scoped
+  `cache:clear --tags=...` no longer wipes the file stash.
 - Numerous smaller correctness fixes: dead code paths removed, per-URL path
   cache removed, `fflush()` before MIME checks and publishing, Windows
   rename retries.
