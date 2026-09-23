@@ -8,7 +8,8 @@ namespace Jackardios\FileStash\Support;
  * PHP's FILTER_FLAG_NO_PRIV_RANGE|NO_RES_RANGE misses several ranges that
  * matter for SSRF (CGNAT 100.64.0.0/10 hosting cloud metadata services,
  * benchmarking 198.18.0.0/15, NAT64 64:ff9b::/96, multicast, ...), so the
- * deny list is spelled out here in full.
+ * IPv4 deny list is spelled out here in full. IPv6 is allow-listed to the
+ * global unicast space first, then filtered by a deny list inside it.
  */
 final class IpRanges
 {
@@ -34,22 +35,16 @@ final class IpRanges
     ];
 
     /**
+     * Special-purpose ranges inside the IPv6 global unicast space 2000::/3
+     * (everything outside it is rejected up front, see isPublic()).
+     *
      * @var array<int, string>
      */
     private const IPV6_BLOCKED = [
-        '::/128',               // unspecified
-        '::1/128',              // loopback
-        '64:ff9b::/96',         // NAT64 well-known prefix (routes to IPv4!)
-        '64:ff9b:1::/48',       // NAT64 local-use prefix
-        '100::/64',             // discard-only
         '2001::/23',            // IETF protocol assignments (incl. Teredo, benchmarking)
         '2001:db8::/32',        // documentation
         '2002::/16',            // 6to4 (deprecated; embeds arbitrary IPv4 — blanket-denied)
         '3fff::/20',            // documentation
-        'fc00::/7',             // unique local addresses
-        'fe80::/10',            // link-local
-        'fec0::/10',            // deprecated site-local
-        'ff00::/8',             // multicast
     ];
 
     /**
@@ -75,6 +70,17 @@ final class IpRanges
         // address — classify by the IPv4 rules.
         if (strlen($bytes) === 16 && substr($bytes, 0, 12) === "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff") {
             $bytes = substr($bytes, 12);
+        }
+
+        // Every globally routable IPv6 allocation lives in 2000::/3 (first
+        // three bits 001). Everything outside is special-purpose or reserved:
+        // unspecified and loopback, IPv4-compatible ::/96 and SIIT
+        // ::ffff:0:0:0/96 (embed an IPv4 address), NAT64 64:ff9b::/96 and
+        // 64:ff9b:1::/48 (route to IPv4!), discard-only 100::/64, SRv6
+        // 5f00::/16, unique local fc00::/7, link-local fe80::/10, site-local
+        // fec0::/10, multicast ff00::/8.
+        if (strlen($bytes) === 16 && (ord($bytes[0]) & 0xE0) !== 0x20) {
+            return false;
         }
 
         foreach (self::parsedRanges()[strlen($bytes)] ?? [] as $range) {

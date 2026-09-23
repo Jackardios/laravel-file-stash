@@ -88,8 +88,10 @@ for the full migration guide, including how to switch workers over.
   `100.64/10` (cloud metadata at `100.100.100.200`), benchmarking
   `198.18/15`, `192.0.0.0/24`, TEST-NETs, multicast, reserved, NAT64
   `64:ff9b::/96`, Teredo/`2001::/23`, 6to4 `2002::/16` (blanket-denied —
-  the deprecated relay mechanism routes to embedded IPv4), ULA, link/site
-  local, and v4-mapped IPv6 (unwrapped and checked by the IPv4 rules).
+  the deprecated relay mechanism routes to embedded IPv4), and every IPv6
+  address outside the global unicast space `2000::/3` (ULA, link/site
+  local, IPv4-compatible `::/96`, SIIT, reserved space). v4-mapped IPv6 is
+  unwrapped and checked by the IPv4 rules.
   Hostnames resolve via the union of `dns_get_record` (A + AAAA) and
   `gethostbynamel` (covers `/etc/hosts`); hosts that resolve to nothing are
   rejected (fail closed).

@@ -46,6 +46,11 @@ class IpRangesTest extends TestCase
             ['fe80::1'], ['febf::1'],
             ['fec0::1'],
             ['ff02::1'], ['ff00::1'],
+            // outside global unicast 2000::/3
+            ['::127.0.0.1'], ['::10.0.0.1'], ['::8.8.8.8'],      // IPv4-compatible ::/96
+            ['::ffff:0:127.0.0.1'], ['::ffff:0:8.8.8.8'],        // SIIT IPv4-translated
+            ['::2'], ['100:0:0:1::1'], ['5f00::1'],
+            ['1fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'], ['4000::1'],
             // v4-mapped v6 follows the IPv4 rules
             ['::ffff:127.0.0.1'], ['::ffff:10.0.0.1'], ['::ffff:100.64.0.1'], ['::ffff:169.254.169.254'],
             // garbage fails closed
@@ -78,7 +83,7 @@ class IpRangesTest extends TestCase
             ['8.8.8.8'], ['142.250.74.36'],
             // IPv6 public
             ['2600::1'], ['2a00:1450:4001::1'], ['2003::1'],
-            ['4000::1'],
+            ['2000::'], ['2001:200::1'], ['3fff:1000::1'],       // edges of 2000::/3 and its deny list
             // v4-mapped PUBLIC v4 stays public
             ['::ffff:8.8.8.8'],
         ];
