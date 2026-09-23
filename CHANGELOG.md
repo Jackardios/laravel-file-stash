@@ -69,6 +69,10 @@ for the full migration guide, including how to switch workers over.
 - Invalid config values now throw `InvalidConfigurationException` instead of
   being silently coerced. Notably, a string value for `mime_types` used to
   silently disable the whitelist.
+- Integer options are parsed exactly — also from env strings in exponent
+  notation (`1e9`) — instead of through a float that rounded values above
+  2^53 or overflowed; fractions and out-of-range values are rejected. Float
+  options reject `NAN` and infinities.
 - `path` is required and must be absolute (the Laravel config still defaults
   it to `storage/framework/cache/files`); standalone construction requires
   passing it explicitly.

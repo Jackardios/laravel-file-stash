@@ -119,6 +119,16 @@ class ConfigNormalizerTest extends TestCase
         $this->assertSame(1_000_000_000, $this->normalize(['max_size' => 1E+9])['max_size']);
     }
 
+    public function testIntegerStringsAreParsedExactly(): void
+    {
+        // Beyond 2^53 a detour through float would silently round.
+        $this->assertSame(PHP_INT_MAX, $this->normalize(['max_size' => '9223372036854775807'])['max_size']);
+        $this->assertSame(9007199254740993, $this->normalize(['max_size' => '9007199254740993'])['max_size']);
+        $this->assertSame(9007199254740993, $this->normalize(['max_size' => '9.007199254740993e15'])['max_size']);
+        $this->assertSame(1500, $this->normalize(['max_size' => '1.5E+3'])['max_size']);
+        $this->assertSame(-1, $this->normalize(['max_file_size' => ' -1 '])['max_file_size']);
+    }
+
     #[DataProvider('invalidValueProvider')]
     public function testInvalidValuesAreRejected(string $key, mixed $value): void
     {
@@ -137,6 +147,14 @@ class ConfigNormalizerTest extends TestCase
             'max_age fractional' => ['max_age', 1.5],
             'max_age bool' => ['max_age', true],
             'max_size null' => ['max_size', null],
+            'max_size overflowing string' => ['max_size', '9223372036854775808'],
+            'max_size float beyond exact range' => ['max_size', 1e19],
+            'max_size float 2^63' => ['max_size', 9.2233720368547758E+18],
+            'max_size fractional exponent string' => ['max_size', '12e-1'],
+            'max_size huge exponent string' => ['max_size', '1e9999'],
+            'lock_wait_timeout NAN' => ['lock_wait_timeout', NAN],
+            'timeout INF' => ['timeout', INF],
+            'read_timeout overflowing string' => ['read_timeout', '1e999'],
             'lock_wait_timeout string' => ['lock_wait_timeout', 'abc'],
             'timeout bool' => ['timeout', false],
             'prune_timeout fractional string' => ['prune_timeout', '1.5'],

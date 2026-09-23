@@ -185,14 +185,15 @@ final class ConfigNormalizer
             return $value;
         }
 
-        if (is_float($value) && floor($value) === $value && abs($value) <= (float) PHP_INT_MAX) {
+        // (float) PHP_INT_MAX rounds up to 2^63, which no int can hold.
+        if (is_float($value) && floor($value) === $value && abs($value) < (float) PHP_INT_MAX) {
             return (int) $value;
         }
 
-        if (is_string($value) && is_numeric($value)) {
-            $float = (float) $value;
-            if (floor($float) === $float && abs($float) <= (float) PHP_INT_MAX) {
-                return (int) $float;
+        if (is_string($value)) {
+            $int = self::parseIntegerString($value);
+            if ($int !== null) {
+                return $int;
             }
         }
 
@@ -200,23 +201,51 @@ final class ConfigNormalizer
     }
 
     /**
+     * Parse a decimal string ('100', ' -1 ', '1e9', '1.5E+3') that denotes an
+     * integer, exactly: the digits are shifted by the exponent as text, so
+     * nothing is rounded through a float. Fractions and values outside the
+     * int range yield null.
+     */
+    private static function parseIntegerString(string $value): ?int
+    {
+        if (preg_match('/^\s*([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d{1,4}))?\s*$/', $value, $m) !== 1 || $m[2].($m[3] ?? '') === '') {
+            return null;
+        }
+
+        $digits = $m[2].($m[3] ?? '');
+        $point = strlen($m[2]) + (int) ($m[4] ?? 0);
+
+        $whole = $point <= 0 ? '' : substr(str_pad($digits, $point, '0'), 0, $point);
+        $fraction = $point <= 0 ? $digits : (string) substr($digits, $point);
+
+        if (trim($fraction, '0') !== '') {
+            return null;
+        }
+
+        $whole = ltrim($whole, '0');
+        $int = filter_var(($m[1] === '-' ? '-' : '').($whole === '' ? '0' : $whole), FILTER_VALIDATE_INT);
+
+        return is_int($int) ? $int : null;
+    }
+
+    /**
      * @throws InvalidConfigurationException
      */
     private static function toFloat(mixed $value, string $key): float
     {
-        if (is_float($value)) {
-            return $value;
+        $float = match (true) {
+            is_float($value) => $value,
+            is_int($value) => (float) $value,
+            is_string($value) && is_numeric($value) => (float) $value,
+            default => null,
+        };
+
+        // NAN would pass every range check below; INF/overflow is no timeout.
+        if ($float === null || ! is_finite($float)) {
+            throw InvalidConfigurationException::create($key, 'must be a finite number');
         }
 
-        if (is_int($value)) {
-            return (float) $value;
-        }
-
-        if (is_string($value) && is_numeric($value)) {
-            return (float) $value;
-        }
-
-        throw InvalidConfigurationException::create($key, 'must be a number');
+        return $float;
     }
 
     /**
