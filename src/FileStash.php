@@ -240,6 +240,7 @@ class FileStash implements FileStashContract
      * {@inheritdoc}
      *
      * @throws GuzzleException
+     * @throws FailedToRetrieveFileException
      * @throws MimeTypeIsNotAllowedException
      * @throws FileIsTooLargeException
      * @throws HostNotAllowedException

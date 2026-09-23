@@ -3,6 +3,7 @@
 namespace Jackardios\FileStash\Contracts;
 
 use GuzzleHttp\Exception\GuzzleException;
+use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
 use Jackardios\FileStash\Exceptions\FileIsTooLargeException;
 use Jackardios\FileStash\Exceptions\HostNotAllowedException;
 use Jackardios\FileStash\Exceptions\LifecycleLockTimeoutException;
@@ -124,11 +125,15 @@ interface FileStash
      * storage disk. The check also fails (throws) when the source file would
      * be rejected by the MIME type whitelist or the size limit.
      *
-     *
+     * For remote files only a definitive answer returns false: a 4xx other
+     * than 429, or a redirect that was not followed to a document. Rate
+     * limits, server errors, and network errors throw once http_retries are
+     * exhausted — they say nothing about whether the file exists.
      *
      * @return bool Whether the file exists in its source.
      *
-     * @throws GuzzleException
+     * @throws FailedToRetrieveFileException On 429/5xx responses (`statusCode` is set).
+     * @throws GuzzleException On network errors.
      * @throws FileIsTooLargeException
      * @throws MimeTypeIsNotAllowedException
      * @throws HostNotAllowedException

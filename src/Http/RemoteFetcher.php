@@ -61,10 +61,16 @@ class RemoteFetcher
     /**
      * Check whether the remote file exists via a HEAD request.
      *
+     * Only a definitive answer counts as "does not exist": a 3xx the
+     * redirect budget did not resolve, or a 4xx other than 429. Rate
+     * limits, server errors, and network errors (after retries) say nothing
+     * about the file and throw.
+     *
      * @throws MimeTypeIsNotAllowedException
      * @throws FileIsTooLargeException
      * @throws HostNotAllowedException
-     * @throws GuzzleException
+     * @throws FailedToRetrieveFileException On 429/5xx after retries.
+     * @throws GuzzleException On network errors after retries.
      */
     public function exists(File $file): bool
     {
@@ -89,8 +95,13 @@ class RemoteFetcher
 
                 return true;
             });
-        } catch (FailedToRetrieveFileException) {
-            // Non-2xx responses mean "does not exist" for exists().
+        } catch (FailedToRetrieveFileException $exception) {
+            if ($this->isRetryable($exception, $exception->statusCode)) {
+                throw $exception;
+            }
+
+            return false;
+        } catch (TooManyRedirectsException) {
             return false;
         }
     }

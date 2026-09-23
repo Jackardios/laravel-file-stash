@@ -116,6 +116,11 @@ for the full migration guide, including how to switch workers over.
   partial write could append the second body after garbage).
 - `exists()` with a configured MIME whitelist now denies responses without a
   `Content-Type` header (deny-by-default, matching disk behavior).
+- `exists()` returns `false` only for definitive answers (4xx except 429,
+  a redirect not followed to a document). 429 and 5xx responses throw
+  `FailedToRetrieveFileException` (with `statusCode`) once `http_retries`
+  are exhausted, like network errors already did — "the server is
+  overloaded" no longer reads as "the file is gone".
 - Redirect targets are validated against `allowed_hosts` and
   `block_private_hosts`.
 - Redirect-hop bodies are discarded: they no longer pollute the cached file

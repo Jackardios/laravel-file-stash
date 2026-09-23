@@ -326,6 +326,8 @@ FileStash::clear(): void                      // Delete all unused cached files
 FileStash::metrics(): CacheMetrics            // Get hit/miss/eviction counters
 ```
 
+`exists()` returns `false` only for a definitive answer — a 4xx other than 429, or a redirect it did not follow to a document. A 429, a 5xx, or a network error (after `http_retries`) throws (`FailedToRetrieveFileException` with `statusCode`, or the Guzzle exception): it says nothing about whether the file exists.
+
 ---
 
 ## Pruning
@@ -634,6 +636,7 @@ v5 is a major rewrite of the write protocol. For Laravel 10 / PHP 8.1 stay on v4
 | Invalid config values | silently coerced (e.g. a string `mime_types` disabled the whitelist!) | throw `InvalidConfigurationException` |
 | `read_timeout` for HTTP | `stream_set_timeout` on the response stream | curl low-speed abort; HTTP timeouts surface as Guzzle exceptions |
 | `exists()` with a MIME whitelist and no `Content-Type` header | allowed | denied (deny-by-default, matches disk behavior) |
+| `exists()` on 429 / 5xx | `false` | throws `FailedToRetrieveFileException` (4xx and unresolved 3xx still return `false`) |
 | `forget()` / once-cleanup vs. running batches | racy | excluded by the lifecycle lock; nested inside a batch callback the deletion is deferred until the batch ends |
 | `CacheMiss` event | `$file`, `$url` | `$file` only (`$url` was a duplicate of `$file->getUrl()`) |
 | `app(FileStash::class)` | created a second instance | aliased to the `file-stash` singleton |

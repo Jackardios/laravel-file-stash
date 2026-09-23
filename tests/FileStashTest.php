@@ -730,10 +730,59 @@ class FileStashTest extends TestCase
         $this->assertFalse($cache->exists($file));
     }
 
-    public function testExistsRemote500()
+    #[DataProvider('definitiveNegativeStatusProvider')]
+    public function testExistsRemoteReturnsFalseForDefinitiveAnswers(int $status, bool $httpErrors)
     {
         $file = new GenericFile('https://example.com/file');
-        $cache = $this->createCacheWithMockClient([new Response(500)]);
+        $cache = $this->createCacheWithMockClient([new Response($status)], ['max_redirects' => 0], $httpErrors);
+
+        $this->assertFalse($cache->exists($file));
+    }
+
+    public static function definitiveNegativeStatusProvider(): array
+    {
+        return [
+            '301 redirect not followed' => [301, false],
+            '403 forbidden' => [403, false],
+            '410 gone' => [410, true],
+        ];
+    }
+
+    #[DataProvider('transientStatusProvider')]
+    public function testExistsRemoteThrowsForTransientFailures(int $status, bool $httpErrors)
+    {
+        // A server error or rate limit says nothing about the file: reporting
+        // it as missing would make callers delete or skip existing files.
+        $file = new GenericFile('https://example.com/file');
+        $cache = $this->createCacheWithMockClient([new Response($status), new Response($status)], [
+            'http_retries' => 1,
+            'http_retry_delay' => 1,
+        ], $httpErrors);
+
+        try {
+            $cache->exists($file);
+            $this->fail('Expected FailedToRetrieveFileException was not thrown');
+        } catch (FailedToRetrieveFileException $exception) {
+            $this->assertSame($status, $exception->statusCode);
+        }
+    }
+
+    public static function transientStatusProvider(): array
+    {
+        return [
+            '500 server error' => [500, false],
+            '503 with http_errors' => [503, true],
+            '429 rate limited' => [429, false],
+        ];
+    }
+
+    public function testExistsRemoteReturnsFalseOnTooManyRedirects()
+    {
+        $file = new GenericFile('https://example.com/file');
+        $cache = $this->createCacheWithMockClient([
+            new Response(302, ['Location' => 'https://example.com/a']),
+            new Response(302, ['Location' => 'https://example.com/b']),
+        ], ['max_redirects' => 1]);
 
         $this->assertFalse($cache->exists($file));
     }
