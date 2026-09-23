@@ -241,6 +241,11 @@ for the full migration guide, including how to switch workers over.
   values (presigned-URL signatures, tokens) and fragments are redacted in
   the logged URL and in the logged exception message, which Guzzle builds
   from the full request URI. Exceptions thrown to the caller are unchanged.
+- Downloads are written, and their MIME type is checked, through the
+  descriptor that holds the temp file's exclusive lock instead of a second
+  descriptor opened by path. Windows locks are mandatory, so the second
+  descriptor could not write to (or read) the locked file there; on POSIX
+  it saves a descriptor per download.
 - Numerous smaller correctness fixes: dead code paths removed, per-URL path
   cache removed, `fflush()` before MIME checks and publishing, Windows
   rename retries.

@@ -108,26 +108,28 @@ class RemoteFetcher
     }
 
     /**
-     * Download a remote file into the given target path.
+     * Download a remote file into the given target handle.
      *
-     * The download streams through a SizeLimitedStream opened on its own file
-     * descriptor, so oversized bodies abort the transfer as soon as the limit
-     * is crossed. Every retry attempt reopens (and thereby truncates) the
-     * target, so a retried download can never append to a partial body.
+     * The download streams through a SizeLimitedStream over the caller's
+     * handle, so oversized bodies abort the transfer as soon as the limit is
+     * crossed. Every retry attempt truncates the target first, so a retried
+     * download can never append to a partial body. The handle stays open.
+     *
+     * @param  resource  $target  Writable, seekable handle.
      *
      * @throws GuzzleException
      * @throws FileIsTooLargeException
      * @throws FailedToRetrieveFileException
      * @throws HostNotAllowedException
      */
-    public function fetch(File $file, string $targetPath): void
+    public function fetch(File $file, $target): void
     {
         $this->hostValidator->validate($file->getUrl());
 
         $maxBytes = $this->config['max_file_size'];
 
-        $this->executeWithRetries($file, 'GET', function () use ($file, $targetPath, $maxBytes): void {
-            $sink = new SizeLimitedStream($targetPath, $maxBytes);
+        $this->executeWithRetries($file, 'GET', function () use ($file, $target, $maxBytes): void {
+            $sink = new SizeLimitedStream($target, $maxBytes);
 
             try {
                 $response = $this->client()->get(Url::encode($file->getUrl()), [

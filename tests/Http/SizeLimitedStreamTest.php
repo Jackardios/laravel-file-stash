@@ -10,24 +10,33 @@ class SizeLimitedStreamTest extends TestCase
 {
     protected string $path;
 
+    /**
+     * @var resource
+     */
+    protected $handle;
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->path = sys_get_temp_dir().'/file_stash_stream_'.bin2hex(random_bytes(8));
+        $this->handle = fopen($this->path, 'x+b');
     }
 
     protected function tearDown(): void
     {
+        if (is_resource($this->handle)) {
+            fclose($this->handle);
+        }
         @unlink($this->path);
         parent::tearDown();
     }
 
-    public function testOpeningTruncatesPreviousContent(): void
+    public function testConstructionTruncatesTheHandle(): void
     {
         // A retry after a failed attempt must never append to a partial body.
-        file_put_contents($this->path, 'garbage from a previous attempt');
+        fwrite($this->handle, 'garbage from a previous attempt');
 
-        $stream = new SizeLimitedStream($this->path, -1);
+        $stream = new SizeLimitedStream($this->handle, -1);
         $this->assertSame(0, $stream->getSize());
 
         $stream->write('fresh');
@@ -36,9 +45,38 @@ class SizeLimitedStreamTest extends TestCase
         $this->assertSame('fresh', file_get_contents($this->path));
     }
 
+    public function testCloseLeavesTheHandleOpen(): void
+    {
+        // The caller owns the handle (and the lock held through it); Guzzle
+        // closing the response body must not release either.
+        $this->assertTrue(flock($this->handle, LOCK_EX));
+
+        $stream = new SizeLimitedStream($this->handle, -1);
+        $stream->write('data');
+        $stream->close();
+        unset($stream);
+
+        $this->assertIsResource($this->handle);
+        $foreign = fopen($this->path, 'rb');
+        $this->assertFalse(flock($foreign, LOCK_SH | LOCK_NB), 'The lock must still be held.');
+        fclose($foreign);
+    }
+
+    public function testThrowsWhenTheHandleCannotBeTruncated(): void
+    {
+        $readOnly = fopen($this->path, 'rb');
+
+        try {
+            $this->expectException(RuntimeException::class);
+            new SizeLimitedStream($readOnly, -1);
+        } finally {
+            fclose($readOnly);
+        }
+    }
+
     public function testWriteWithinLimit(): void
     {
-        $stream = new SizeLimitedStream($this->path, 10);
+        $stream = new SizeLimitedStream($this->handle, 10);
 
         $this->assertSame(5, $stream->write('12345'));
         $this->assertSame(5, $stream->write('67890'));
@@ -50,7 +88,7 @@ class SizeLimitedStreamTest extends TestCase
 
     public function testWriteBeyondLimitReturnsZeroAndSetsFlag(): void
     {
-        $stream = new SizeLimitedStream($this->path, 5);
+        $stream = new SizeLimitedStream($this->handle, 5);
 
         $this->assertSame(5, $stream->write('12345'));
         // The short write is what makes curl abort the transfer.
@@ -63,7 +101,7 @@ class SizeLimitedStreamTest extends TestCase
 
     public function testUnlimitedAcceptsEverything(): void
     {
-        $stream = new SizeLimitedStream($this->path, -1);
+        $stream = new SizeLimitedStream($this->handle, -1);
 
         $data = str_repeat('x', 100_000);
         $this->assertSame(strlen($data), $stream->write($data));
@@ -73,7 +111,7 @@ class SizeLimitedStreamTest extends TestCase
 
     public function testResetTruncatesPreviouslyWrittenBytes(): void
     {
-        $stream = new SizeLimitedStream($this->path, -1);
+        $stream = new SizeLimitedStream($this->handle, -1);
         $stream->write('redirect-hop body');
 
         $stream->reset();
@@ -85,7 +123,7 @@ class SizeLimitedStreamTest extends TestCase
 
     public function testResetClearsLimitStateAndRestartsCounting(): void
     {
-        $stream = new SizeLimitedStream($this->path, 5);
+        $stream = new SizeLimitedStream($this->handle, 5);
         $stream->write('12345');
         $this->assertSame(0, $stream->write('6'));
         $this->assertTrue($stream->limitExceeded());
@@ -101,7 +139,7 @@ class SizeLimitedStreamTest extends TestCase
 
     public function testDiscardModeSwallowsWritesUntilNextReset(): void
     {
-        $stream = new SizeLimitedStream($this->path, 5);
+        $stream = new SizeLimitedStream($this->handle, 5);
 
         $stream->reset(discardBody: true);
         // Larger than the limit: discarded bytes are neither stored nor counted.
@@ -116,36 +154,21 @@ class SizeLimitedStreamTest extends TestCase
         $this->assertSame('final', file_get_contents($this->path));
     }
 
-    public function testResetAfterDetachThrows(): void
+    public function testResetAfterCloseThrows(): void
     {
-        $stream = new SizeLimitedStream($this->path, -1);
-        $resource = $stream->detach();
+        $stream = new SizeLimitedStream($this->handle, -1);
+        $stream->close();
 
-        try {
-            $this->expectException(RuntimeException::class);
-            $stream->reset();
-        } finally {
-            fclose($resource);
-        }
-    }
-
-    public function testThrowsWhenPathIsNotWritable(): void
-    {
         $this->expectException(RuntimeException::class);
-
-        new SizeLimitedStream('/nonexistent-dir/'.bin2hex(random_bytes(8)).'/file', -1);
+        $stream->reset();
     }
 
     public function testWriteAfterDetachThrows(): void
     {
-        $stream = new SizeLimitedStream($this->path, -1);
-        $resource = $stream->detach();
+        $stream = new SizeLimitedStream($this->handle, -1);
+        $this->assertSame($this->handle, $stream->detach());
 
-        try {
-            $this->expectException(RuntimeException::class);
-            $stream->write('data');
-        } finally {
-            fclose($resource);
-        }
+        $this->expectException(RuntimeException::class);
+        $stream->write('data');
     }
 }

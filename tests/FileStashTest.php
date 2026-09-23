@@ -13,6 +13,7 @@ use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Filesystem\FilesystemManager;
 use Jackardios\FileStash\Contracts\File;
@@ -700,6 +701,25 @@ class FileStashTest extends TestCase
         $this->expectException(MimeTypeIsNotAllowedException::class);
         $this->expectExceptionMessage('text/plain');
         $cache->get(new GenericFile('fixtures://test-file.txt'), $this->noop);
+    }
+
+    public function testMimeCheckReadsTheLockedTempHandle()
+    {
+        // On Windows file locks are mandatory: reopening the exclusively
+        // locked temp file by path (finfo on the path) fails. The MIME check
+        // must use the descriptor that holds the lock.
+        $files = new class extends Filesystem
+        {
+            public function mimeType($path)
+            {
+                throw new \RuntimeException("reopened '{$path}' by path");
+            }
+        };
+        $cache = new FileStash(['path' => $this->cachePath, 'mime_types' => ['image/jpeg']], null, $files);
+
+        $path = $cache->get(new GenericFile('fixtures://test-image.jpg'));
+
+        $this->assertFileEquals(__DIR__.'/files/test-image.jpg', $path);
     }
 
     public function testExistsDisk()

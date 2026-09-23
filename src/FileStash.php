@@ -1323,21 +1323,19 @@ class FileStash implements FileStashContract
                 }
 
                 if ($source === 'remote') {
-                    $this->remoteFetcher->fetch($file, $tempPath);
+                    $this->remoteFetcher->fetch($file, $tempStream);
                 } else {
                     $this->fetchDiskFile($file, $tempStream);
                 }
 
                 // Flush the payload to stable storage before the rename makes
                 // it visible: otherwise a power loss can leave a zero-length
-                // or truncated file under the published name. The page cache
-                // is per-inode, so fsync through this descriptor also covers
-                // bytes written via the fetcher's own descriptor.
+                // or truncated file under the published name.
                 if (! fsync($tempStream)) {
                     throw FailedToRetrieveFileException::create("Could not fsync temp file for '{$cachedPath}'.");
                 }
 
-                $this->verifyMimeType($tempPath);
+                $this->verifyMimeType($tempStream);
                 $this->publish($tempPath, $cachedPath);
             } catch (\Throwable $exception) {
                 fclose($tempStream);
@@ -1391,15 +1389,21 @@ class FileStash implements FileStashContract
     /**
      * Verify the MIME type of the downloaded file against the whitelist.
      *
+     * Reads through the locked temp handle (content from the start, the
+     * position is left alone): on Windows locks are mandatory, so reopening
+     * the file by path would fail.
+     *
+     * @param  resource  $stream
+     *
      * @throws MimeTypeIsNotAllowedException
      */
-    protected function verifyMimeType(string $path): void
+    protected function verifyMimeType($stream): void
     {
         if (empty($this->config['mime_types'])) {
             return;
         }
 
-        MimeGuard::ensureAllowed($this->files->mimeType($path), $this->config['mime_types']);
+        MimeGuard::ensureAllowed(@mime_content_type($stream), $this->config['mime_types']);
     }
 
     /**
@@ -1506,9 +1510,8 @@ class FileStash implements FileStashContract
             $maxBytes = $this->config['max_file_size'];
             $this->copyStreamWithSizeLimit($source, $target, $maxBytes, $maxBytes < 0);
 
-            // Make the copied bytes visible to path-based readers (MIME
-            // check). A failed flush means part of the payload never reached
-            // the file (e.g. ENOSPC) — the copy must not pass as complete.
+            // A failed flush means part of the payload never reached the
+            // file (e.g. ENOSPC) — the copy must not pass as complete.
             if (! fflush($target)) {
                 throw FailedToRetrieveFileException::create("Could not flush copied data for '{$file->getUrl()}'.");
             }

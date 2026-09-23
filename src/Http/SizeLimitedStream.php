@@ -7,7 +7,7 @@ use RuntimeException;
 use Throwable;
 
 /**
- * Writable PSR-7 stream over its own file descriptor that stops accepting
+ * Writable PSR-7 stream over a caller-owned file handle that stops accepting
  * data once more than $maxBytes have been written.
  *
  * Used as the Guzzle `sink` for remote downloads: when the limit is crossed,
@@ -16,8 +16,11 @@ use Throwable;
  * detects this via limitExceeded(). Non-curl handlers may ignore the short
  * write, so callers must check limitExceeded() after the transfer as well.
  *
- * Opening with mode 'w+b' truncates any previous (partial) content, so a
- * fresh instance per retry attempt can never append to a partial body.
+ * The handle is borrowed, not owned: close() only lets go of it, so the
+ * caller keeps the descriptor and the lock held through it (Windows locks
+ * are mandatory — a second descriptor could not write to the locked file).
+ * Construction truncates the handle, so a fresh instance per retry attempt
+ * can never append to a partial body.
  */
 final class SizeLimitedStream implements StreamInterface
 {
@@ -33,21 +36,15 @@ final class SizeLimitedStream implements StreamInterface
     private bool $discardBody = false;
 
     /**
+     * @param  resource  $stream  Writable, seekable handle; stays open after close().
      * @param  int  $maxBytes  Maximum number of bytes to accept, or -1 for unlimited.
+     *
+     * @throws RuntimeException When the handle cannot be truncated.
      */
-    public function __construct(private readonly string $path, private readonly int $maxBytes)
+    public function __construct($stream, private readonly int $maxBytes)
     {
-        $stream = @fopen($path, 'w+b');
-        if ($stream === false) {
-            throw new RuntimeException("Could not open '{$path}' for writing.");
-        }
-
         $this->stream = $stream;
-    }
-
-    public function __destruct()
-    {
-        $this->close();
+        $this->reset();
     }
 
     /**
@@ -75,7 +72,7 @@ final class SizeLimitedStream implements StreamInterface
         $stream = $this->ensureStream();
 
         if (! ftruncate($stream, 0) || fseek($stream, 0) === -1) {
-            throw new RuntimeException("Could not reset '{$this->path}'.");
+            throw new RuntimeException('Could not truncate the download target.');
         }
 
         $this->written = 0;
@@ -101,7 +98,7 @@ final class SizeLimitedStream implements StreamInterface
 
         $written = fwrite($stream, $string);
         if ($written === false) {
-            throw new RuntimeException("Could not write to '{$this->path}'.");
+            throw new RuntimeException('Could not write to the download target.');
         }
 
         $this->written += $written;
@@ -109,12 +106,12 @@ final class SizeLimitedStream implements StreamInterface
         return $written;
     }
 
+    /**
+     * Let go of the borrowed handle without closing it.
+     */
     public function close(): void
     {
-        if ($this->stream !== null) {
-            fclose($this->stream);
-            $this->stream = null;
-        }
+        $this->stream = null;
     }
 
     /**

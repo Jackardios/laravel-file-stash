@@ -515,6 +515,25 @@ class FileStashFunctionMockTest extends TestCase
         ];
     }
 
+    public function testDownloadWritesThroughTheLockedTempHandle()
+    {
+        // On Windows file locks are mandatory: a second descriptor on the
+        // exclusively locked temp file cannot write to it. The HTTP layer
+        // must never open the temp file itself.
+        $fopenMock = $this->getFunctionMock('Jackardios\\FileStash\\Http', 'fopen');
+        $fopenMock->expects($this->never());
+
+        $mock = new MockHandler([new Response(200, [], 'remote body')]);
+        $cache = new FileStash(
+            ['path' => $this->cachePath],
+            new Client(['handler' => HandlerStack::create($mock)])
+        );
+
+        $content = $cache->get(new GenericFile('https://files/a.txt'), fn ($file, $path) => file_get_contents($path));
+
+        $this->assertSame('remote body', $content);
+    }
+
     public function testBatchChunkingClosesCachedStreamsBeforeCallback()
     {
         $files = [];
