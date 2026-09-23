@@ -198,6 +198,11 @@ final class LockManager
     /**
      * Open a lock file, creating it and its directory if needed.
      *
+     * New files and directories get the process umask applied to 0666/0777,
+     * so a group-writable umask lets workers of different users share the
+     * cache. A lock file another user created without write permission for
+     * us is opened read-only: flock() works on read-only descriptors.
+     *
      * @return resource
      *
      * @throws RuntimeException
@@ -207,13 +212,17 @@ final class LockManager
         $directory = dirname($path);
 
         if (! is_dir($directory)) {
-            @mkdir($directory, 0755, true);
+            @mkdir($directory, 0777, true);
             if (! is_dir($directory)) {
                 throw new RuntimeException("Failed to create lock directory '{$directory}'.");
             }
         }
 
         $stream = @fopen($path, 'c+');
+        if ($stream === false) {
+            $stream = @fopen($path, 'r');
+        }
+
         if ($stream === false) {
             throw new RuntimeException("Failed to open file cache lock at '{$path}'.");
         }

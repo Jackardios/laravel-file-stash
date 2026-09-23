@@ -513,6 +513,81 @@ class FileStashTest extends TestCase
         $this->assertSame(3, $pruner->prune()['deleted']);
     }
 
+    public function testCreatedFilesAndDirectoriesRespectUmask()
+    {
+        // A group-writable umask plus a setgid directory is how the web
+        // server and queue workers of different users share one cache.
+        $previous = umask(0002);
+
+        try {
+            $path = "{$this->cachePath}/nested/cache";
+            $cache = new FileStash(['path' => $path, 'batch_chunk_size' => 1]);
+            $cache->batch([new GenericFile('fixtures://test-file.txt'), new GenericFile('fixtures://test-image.jpg')]);
+            $cache->prune();
+        } finally {
+            umask($previous);
+        }
+
+        $this->assertSame(0775, fileperms("{$this->cachePath}/nested") & 0777);
+        $this->assertSame(0775, fileperms($path) & 0777);
+        $this->assertSame(0775, fileperms("{$path}/.locks") & 0777);
+        foreach (['.lifecycle.lock', '.pin.lock', hash('sha256', 'fixtures://test-file.txt')] as $name) {
+            $this->assertSame(0664, fileperms("{$path}/{$name}") & 0777, $name);
+        }
+    }
+
+    public function testReadOnlyLockFilesCreatedByAnotherUserStillWork()
+    {
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            $this->markTestSkipped('root ignores file permissions');
+        }
+
+        $urls = ['fixtures://test-file.txt', 'fixtures://test-image.jpg'];
+        $this->app['files']->makeDirectory("{$this->cachePath}/.locks", 0777, true, true);
+        $lockFiles = [
+            "{$this->cachePath}/.lifecycle.lock",
+            "{$this->cachePath}/.pin.lock",
+            "{$this->cachePath}/.locks/".hash('sha256', $urls[0]).'.lock',
+        ];
+        foreach ($lockFiles as $lockFile) {
+            touch($lockFile);
+            chmod($lockFile, 0444);
+        }
+
+        $cache = $this->createCache(['batch_chunk_size' => 1]);
+        $sizes = $cache->batch(
+            array_map(fn (string $url) => new GenericFile($url), $urls),
+            fn ($files, $paths) => array_map('filesize', $paths)
+        );
+
+        $this->assertSame([filesize(__DIR__.'/files/test-file.txt'), filesize(__DIR__.'/files/test-image.jpg')], $sizes);
+        $this->assertTrue($cache->prune()['completed']);
+    }
+
+    public function testRetrieveThrowsFailedToRetrieveFileExceptionAfterMaxAttempts()
+    {
+        $url = 'fixtures://test-file.txt';
+        $cachedPath = $this->getCachedPath($url);
+        $cache = $this->createCache(['lock_wait_timeout' => 0, 'lock_max_attempts' => 3]);
+
+        // Another worker holds the download claim and never publishes.
+        $claimPath = "{$this->cachePath}/.locks/".basename($cachedPath).'.lock';
+        $this->app['files']->makeDirectory(dirname($claimPath), 0777, true, true);
+        $claim = fopen($claimPath, 'c');
+        $this->assertTrue(flock($claim, LOCK_EX));
+
+        try {
+            $this->expectException(FailedToRetrieveFileException::class);
+            $this->expectExceptionMessage('Failed to retrieve file after 3 attempts');
+
+            $cache->get(new GenericFile($url));
+        } finally {
+            fclose($claim);
+            $this->assertFileDoesNotExist($cachedPath);
+            $this->assertSame(1, $cache->metrics()->errors);
+        }
+    }
+
     public function testPruneAndClearOnlyTouchCacheEntries()
     {
         $hash = hash('sha256', 'https://example.com/foreign');

@@ -183,6 +183,11 @@ for the full migration guide, including how to switch workers over.
   files directly inside the cache directory); they used to delete every
   file in the directory tree, including foreign files and subdirectories.
   `clear()` no longer reports orphaned temp files as evicted entries.
+- New directories are created with `0777` minus the umask (were hard-coded
+  `0755`), so a group-writable umask lets users share one cache; lock files
+  another user created read-only are opened read-only instead of failing.
+  An unopenable claim file now fails with a `RuntimeException` naming the
+  path instead of burning `lock_max_attempts`.
 - `prune()` no longer evicts entries a running chunked batch is using:
   chunked batches release their per-file locks before the callback and
   now hold a shared pin lock instead, which `prune()` must take

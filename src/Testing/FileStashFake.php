@@ -66,7 +66,7 @@ class FileStashFake extends FileStash
         $path = "{$storagePath}/framework/testing/disks/file-stash".$this->parallelTestingSuffix();
 
         $files = new Filesystem;
-        $files->makeDirectory($path, 0755, true, true);
+        $files->makeDirectory($path, 0777, true, true);
         $files->cleanDirectory($path);
 
         parent::__construct(

@@ -1229,24 +1229,17 @@ class FileStash implements FileStashContract
      * @return resource|null Null when the claim could not be acquired in time.
      *
      * @throws FileLockedException When $throwOnLock is set and the claim is taken.
+     * @throws RuntimeException When the claim file cannot be opened.
      */
     protected function openClaimStream(string $claimPath, bool $throwOnLock)
     {
-        $directory = dirname($claimPath);
-        if (! is_dir($directory)) {
-            @mkdir($directory, 0755, true);
-        }
-
         // One deadline across all attempts: a claim GC'd under us must not
         // grant each retry a fresh lock_wait_timeout budget.
         $timeout = $this->config['lock_wait_timeout'];
         $deadline = $timeout >= 0 ? microtime(true) + $timeout : null;
 
         for ($attempt = 0; $attempt < 5; $attempt++) {
-            $claimStream = @fopen($claimPath, 'c');
-            if ($claimStream === false) {
-                return null;
-            }
+            $claimStream = LockManager::openLockFile($claimPath);
 
             if ($throwOnLock) {
                 if (! flock($claimStream, LOCK_EX | LOCK_NB)) {
@@ -1615,7 +1608,7 @@ class FileStash implements FileStashContract
     protected function ensurePathExists(): void
     {
         if (! $this->files->exists($this->config['path'])) {
-            $this->files->makeDirectory($this->config['path'], 0755, true, true);
+            $this->files->makeDirectory($this->config['path'], 0777, true, true);
         }
     }
 }

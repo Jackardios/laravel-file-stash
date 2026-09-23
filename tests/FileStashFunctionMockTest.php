@@ -432,39 +432,6 @@ class FileStashFunctionMockTest extends TestCase
         );
     }
 
-    public function testRetrieveThrowsFailedToRetrieveFileExceptionAfterMaxAttempts()
-    {
-        $url = 'fixtures://test-file.txt';
-        $file = new GenericFile($url);
-        $cachedPath = $this->getCachedPath($url);
-
-        $cache = $this->createCacheWithMockFixtures();
-
-        // Simulate an unusable cache directory: neither published entries nor
-        // download claims can be opened, so every retrieve attempt fails.
-        $fopenMock = $this->getFunctionMock('Jackardios\\FileStash', 'fopen');
-        $fopenMock->expects($this->atLeast(3))
-            ->willReturnCallback(function ($path, $mode) use ($cachedPath) {
-                if ($path === $cachedPath && $mode === 'rb') {
-                    return false;
-                }
-                if (str_ends_with($path, '.lock') && $mode === 'c') {
-                    return false;
-                }
-
-                return \fopen($path, $mode);
-            });
-
-        $this->expectException(FailedToRetrieveFileException::class);
-        $this->expectExceptionMessage('Failed to retrieve file after 3 attempts');
-
-        try {
-            $cache->get($file, $this->noop);
-        } finally {
-            $this->assertFileDoesNotExist($cachedPath);
-        }
-    }
-
     public function testGetWaitsForLockReleaseWhenNotThrowing()
     {
         $url = 'fixtures://test-file.txt';

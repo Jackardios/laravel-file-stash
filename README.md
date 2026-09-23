@@ -282,6 +282,20 @@ try {
 }
 ```
 
+### Sharing the cache between users
+
+Files and directories are created with the default modes (`0666`/`0777`) minus the process umask. When the web server and the queue workers run as different users, give them a common group, make the cache directory group-writable with the setgid bit (new entries inherit the group), and run every process with a group-writable umask:
+
+```bash
+mkdir -p storage/framework/cache/files
+chgrp www-data storage/framework/cache/files
+chmod 2775 storage/framework/cache/files
+```
+
+The umask is inherited from the process manager: e.g. `UMask=0002` in a systemd drop-in for the php-fpm service, `umask=002` in each supervisor `[program:...]` section.
+
+Lock files created by another user without write permission for you are opened read-only (`flock()` works on read-only descriptors), but new entries still need a writable directory.
+
 ---
 
 ## API Reference
@@ -583,7 +597,7 @@ Metrics are tracked and `getOnce()`/`batchOnce()` really delete their files, so 
 
 - **Local filesystem only.** All guarantees are built on `flock()`, atomic `rename()`, and inode semantics of a local POSIX filesystem. Do **not** point `path` at NFS or other network mounts — advisory locking there ranges from unreliable to silently broken. In multi-server setups give each server its own cache directory.
 - **flock has no fairness.** An exclusive waiter (`clear()`, a `getOnce()` cleanup) can be starved indefinitely by a continuous stream of shared readers on a very hot file. In practice the `lifecycle_lock_timeout` bounds the wait; design hot paths so `clear()` isn't racing them constantly.
-- **Chunked batches release per-file locks before the callback** — see [Batch + prune](#batch--prune).
+- **Chunked batches pause eviction** — while one runs, `prune()` deletes nothing; see [Batch + prune](#batch--prune).
 - **`block_private_hosts` cannot stop DNS rebinding** — curl re-resolves the hostname for the actual request. Use `allowed_hosts` as the primary SSRF defense.
 - **`pcntl_fork()`**: the lifecycle-lock reentrancy registry is per process. A child forked while the parent holds a lifecycle lock shares the lock file descriptor with unpredictable results — don't fork mid-callback.
 
