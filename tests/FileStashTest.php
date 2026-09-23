@@ -296,8 +296,10 @@ class FileStashTest extends TestCase
         $file = new GenericFile('abc://files/image.jpg');
         $cache = $this->createCache();
 
-        $this->expectException(Exception::class);
-        $this->expectExceptionMessage('Disk [abc] does not have a configured driver');
+        // Laravel's own exception; only its class and the disk name are
+        // stable across framework versions.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('abc');
         $cache->get($file, $this->noop);
     }
 
