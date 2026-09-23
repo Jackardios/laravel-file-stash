@@ -587,7 +587,7 @@ The fake supports all contract methods (`get`, `getOnce`, `batch`, `batchOnce`, 
 
 ```php
 $fake->putFake($url, $content);          // seed a file with specific content
-$fake->shouldExist($url, false);         // control what exists() reports
+$fake->shouldExist($url, false);         // control what exists() reports (default: true after putFake() or while a retrieved file is cached)
 $fake->path();                           // the fake's temp directory
 
 $fake->assertRetrieved($url);            // get/getOnce/batch/batchOnce was called for the URL
@@ -597,7 +597,7 @@ $fake->assertNothingRetrieved();
 $fake->assertForgotten($url);            // forget() was called for the URL
 ```
 
-Metrics are tracked and `getOnce()`/`batchOnce()` really delete their files, so eviction-sensitive code paths behave like production. As in the real cache, `forget()` and `getOnce()` called inside a batch callback delete the file only after the outermost batch returns.
+The fake is hermetic: it never downloads anything and never reads storage disks, so `disk://` URLs get fake content too, and `exists()` does not look at `Storage::fake()` disks — use `putFake()`/`shouldExist()`. Metrics are tracked and `getOnce()`/`batchOnce()` really delete their files, so eviction-sensitive code paths behave like production. As in the real cache, `forget()` and `getOnce()` called inside a batch callback delete the file only after the outermost batch returns.
 
 `FileStashFake` extends the real `FileStash`, so `FileStash::fake()` also works for code that type-hints (or resolves from the container) the concrete class. Prefer the `Jackardios\FileStash\Contracts\FileStash` contract in your own typehints anyway — it keeps your code decoupled from the implementation. Like `Storage::fake()`, the fake works in a stable directory under `storage/framework/testing` (suffixed with the parallel-testing token when running `php artisan test --parallel`) that is wiped every time a fake is constructed.
 

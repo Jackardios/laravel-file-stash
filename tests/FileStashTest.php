@@ -2520,6 +2520,18 @@ class FileStashTest extends TestCase
         $this->assertFileDoesNotExist($path);
     }
 
+    public function testFakeNeverTouchesStorageDisks()
+    {
+        // Hermetic like Http::fake(): an unconfigured disk would throw if the
+        // fake resolved it, a configured one could be real cloud storage.
+        $fake = new FileStashFake($this->app);
+        $file = new GenericFile('not-configured://a.txt');
+
+        $this->assertFalse($fake->exists($file));
+        $this->assertSame('fake-content:not-configured://a.txt', $fake->get($file, fn ($file, $path) => file_get_contents($path)));
+        $this->assertTrue($fake->exists($file));
+    }
+
     public function testFakeShouldExist()
     {
         $fake = new FileStashFake($this->app);
