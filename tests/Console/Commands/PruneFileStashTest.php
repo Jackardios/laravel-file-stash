@@ -45,7 +45,7 @@ class PruneFileStashTest extends TestCase
         $this->fakePruneStats(['completed' => false, 'deleted' => 1, 'remaining' => 50, 'total_size' => 1073741824]);
 
         $this->artisan('file-stash:prune')
-            ->expectsOutput('Prune operation did not complete (timed out).')
+            ->expectsOutput('Prune did not complete (timed out, or a chunked batch is using the cache); it continues on the next run.')
             ->expectsOutput('  Deleted: 1 files')
             ->expectsOutput('  Remaining: 50 files')
             ->expectsOutput('  Total size: 1.00 GB')

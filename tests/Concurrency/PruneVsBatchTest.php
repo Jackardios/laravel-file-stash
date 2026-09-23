@@ -2,12 +2,12 @@
 
 namespace Jackardios\FileStash\Tests\Concurrency;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 
 /**
  * prune() running concurrently with readers must never corrupt reads, and
- * must never delete entries that an open (unchunked) batch() still holds
- * shared locks on.
+ * must never delete entries that an open batch() is using.
  */
 #[Group('concurrency')]
 class PruneVsBatchTest extends ConcurrencyTestCase
@@ -57,7 +57,13 @@ class PruneVsBatchTest extends ConcurrencyTestCase
         $this->assertTrue($pruneResult['ok'] ?? false, 'Prune worker failed: '.$pruneResult['_stdout'].$pruneResult['_stderr']);
     }
 
-    public function testPruneDoesNotDeleteFilesHeldByOpenBatch(): void
+    /**
+     * Unchunked batches hold a shared lock on every entry for the whole
+     * callback; chunked batches release the per-file locks before the
+     * callback and hold the shared pin lock instead.
+     */
+    #[DataProvider('chunkSizeProvider')]
+    public function testPruneDoesNotDeleteFilesHeldByOpenBatch(int $chunkSize): void
     {
         $server = $this->startSlowServer();
 
@@ -70,17 +76,16 @@ class PruneVsBatchTest extends ConcurrencyTestCase
             $urls
         );
 
-        // Unchunked batch: shared locks on both entries are held for the whole
-        // callback (2 files × 3 s sleep = 6 s window).
+        // 2 files × 3 s sleep = 6 s callback window.
         $batchWorker = $this->spawnWorker([
             'op' => 'batch',
             'urls' => $urls,
             'callback_sleep_ms' => 3000,
-            'config' => ['batch_chunk_size' => -1],
+            'config' => ['batch_chunk_size' => $chunkSize],
         ]);
 
         // Entries are published (renamed into place) before the callback runs,
-        // so once both exist the batch holds its shared locks.
+        // so once both exist the batch holds its shared (pin) locks.
         $deadline = microtime(true) + 30.0;
         while (array_filter($entryPaths, 'file_exists') !== $entryPaths) {
             if (microtime(true) > $deadline) {
@@ -105,7 +110,7 @@ class PruneVsBatchTest extends ConcurrencyTestCase
         );
 
         foreach ($entryPaths as $entryPath) {
-            $this->assertFileExists($entryPath, 'Prune deleted an entry that an open batch() holds a shared lock on.');
+            $this->assertFileExists($entryPath, 'Prune deleted an entry that an open batch() is using.');
         }
 
         $batchResult = $this->awaitWorkers([$batchWorker], 60.0)[0];
@@ -119,5 +124,16 @@ class PruneVsBatchTest extends ConcurrencyTestCase
                 "Batch file #{$n} was corrupted."
             );
         }
+    }
+
+    /**
+     * @return array<string, array{int}>
+     */
+    public static function chunkSizeProvider(): array
+    {
+        return [
+            'unchunked' => [-1],
+            'chunked' => [1],
+        ];
     }
 }

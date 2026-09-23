@@ -38,7 +38,7 @@ class PruneFileStash extends Command
 
         // Symfony's global --silent/--quiet options suppress all of this.
         if (! $stats['completed']) {
-            $this->warn('Prune operation did not complete (timed out).');
+            $this->warn('Prune did not complete (timed out, or a chunked batch is using the cache); it continues on the next run.');
         } else {
             $this->info('File cache pruned successfully.');
         }

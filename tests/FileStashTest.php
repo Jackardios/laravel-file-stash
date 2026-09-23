@@ -487,6 +487,32 @@ class FileStashTest extends TestCase
         ];
     }
 
+    public function testPruneKeepsEntriesOfARunningChunkedBatch()
+    {
+        $this->app['files']->put("{$this->diskPath}/third.txt", 'third');
+        $files = [
+            new GenericFile('fixtures://test-file.txt'),
+            new GenericFile('fixtures://test-image.jpg'),
+            new GenericFile('test://third.txt'),
+        ];
+        $cache = $this->createCache(['batch_chunk_size' => 1]);
+        // A second instance stands in for the scheduled prune of another
+        // worker; max_size 0 makes every entry an eviction candidate.
+        $pruner = $this->createCache(['max_size' => 0]);
+
+        $existing = $cache->batch($files, function ($files, $paths) use ($pruner) {
+            $stats = $pruner->prune();
+            $this->assertFalse($stats['completed']);
+
+            return array_map('file_exists', $paths);
+        });
+
+        $this->assertSame([true, true, true], $existing);
+
+        // Once the batch is over, prune evicts as usual.
+        $this->assertSame(3, $pruner->prune()['deleted']);
+    }
+
     public function testPruneAndClearOnlyTouchCacheEntries()
     {
         $hash = hash('sha256', 'https://example.com/foreign');

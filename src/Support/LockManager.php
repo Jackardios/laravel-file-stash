@@ -121,7 +121,7 @@ final class LockManager
             return $callback();
         }
 
-        $stream = self::openLockStream($lockPath);
+        $stream = self::openLockFile($lockPath);
 
         if (! self::flockWithTimeout($stream, $lockType, $timeout)) {
             fclose($stream);
@@ -196,13 +196,13 @@ final class LockManager
     }
 
     /**
-     * Open a lock file, creating its directory if needed.
+     * Open a lock file, creating it and its directory if needed.
      *
      * @return resource
      *
      * @throws RuntimeException
      */
-    private static function openLockStream(string $path)
+    public static function openLockFile(string $path)
     {
         $directory = dirname($path);
 
@@ -215,7 +215,7 @@ final class LockManager
 
         $stream = @fopen($path, 'c+');
         if ($stream === false) {
-            throw new RuntimeException("Failed to open file cache lifecycle lock at '{$path}'.");
+            throw new RuntimeException("Failed to open file cache lock at '{$path}'.");
         }
 
         return $stream;

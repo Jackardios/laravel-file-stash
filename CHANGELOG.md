@@ -183,6 +183,11 @@ for the full migration guide, including how to switch workers over.
   files directly inside the cache directory); they used to delete every
   file in the directory tree, including foreign files and subdirectories.
   `clear()` no longer reports orphaned temp files as evicted entries.
+- `prune()` no longer evicts entries a running chunked batch is using:
+  chunked batches release their per-file locks before the callback and
+  now hold a shared pin lock instead, which `prune()` must take
+  exclusively for each eviction (it reports `completed => false` while a
+  chunked batch runs).
 - `prune()` re-checks an entry's access time under the exclusive lock
   before evicting it: an entry read after prune collected its statistics
   is kept instead of being evicted on stale data.

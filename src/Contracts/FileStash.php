@@ -84,6 +84,9 @@ interface FileStash
     /**
      * Remove cached files that are too old or exceed the maximum cache size.
      *
+     * Entries in use are never removed: `completed` is false when prune
+     * stopped early (prune_timeout) or skipped eviction because a chunked
+     * batch is running; the next run continues.
      *
      * @return array{deleted: int, remaining: int, total_size: int, completed: bool} Statistics about pruning operation
      *

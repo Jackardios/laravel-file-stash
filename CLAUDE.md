@@ -44,17 +44,17 @@ composer analyse
 
 ### Write protocol (v5) — the core invariants
 
-Cache layout inside `config['path']`: entry = `{sha256(url)}`; temp = `{sha256}.{pid}.{16hex}.tmp`; claim = `.locks/{sha256}.lock`; lifecycle lock = `.lifecycle.lock`. prune/clear only look at depth-0 files named like an entry or a temp file (`findCacheFiles()`); anything else in the directory is never touched. Temp files are garbage-collected by prune after a 60 s grace (`TEMP_GRACE_SECONDS`) and by clear (no eviction events for them).
+Cache layout inside `config['path']`: entry = `{sha256(url)}`; temp = `{sha256}.{pid}.{16hex}.tmp`; claim = `.locks/{sha256}.lock`; lifecycle lock = `.lifecycle.lock`; pin lock = `.pin.lock`. prune/clear only look at depth-0 files named like an entry or a temp file (`findCacheFiles()`); anything else in the directory is never touched. Temp files are garbage-collected by prune after a 60 s grace (`TEMP_GRACE_SECONDS`) and by clear (no eviction events for them).
 
 1. **Read path** (`tryReadExisting`): `fopen('rb')` → `LOCK_SH` → `fstat`: `nlink == 0` → retry (entry was deleted/re-published); zero-byte entries are valid and served. Hot reads never touch the claim.
 2. **Write path** (`claimAndCreate` → `downloadAndPublish`): claim `LOCK_EX` (dedupes concurrent downloads; after acquiring, recheck `nlink == 0` against claim GC) → re-check `tryReadExisting` (winner may have published while we waited) → stream into temp file held under `LOCK_EX` its whole lifetime (flock returns checked; EX failure → fresh temp retry) → `fsync` (power-loss safety; page cache is per-inode, covers the fetcher's own fd) → MIME check → atomic `rename(temp, entry)` → convert EX→SH **on the same fd** (follows the inode) → recheck `nlink` (the EX→SH conversion is not atomic on Linux; on loss, re-download under the same claim, max 2 attempts).
 3. **Deletes**: core is `unlinkLocked(path, verify?)` — `LOCK_EX|LOCK_NB` on a fresh fd + optional `verify(fstat)` guard + compare `fstat($fd)` vs `stat($path)` dev/ino — never delete an entry that was concurrently re-published over the same path. `deleteEntry()` adds eviction metrics + `CacheFileEvicted`; temp/claim GC calls `unlinkLocked` directly (no events).
-4. **Lock ordering** (no cycles): lifecycle → per-file SH (batch holds many) → claim → temp.
+4. **Lock ordering** (no cycles): lifecycle → pin → per-file SH (batch holds many) → claim → temp.
 5. Crash safety: the kernel drops flocks on process death; orphaned temps and idle claims are janitorial work for `prune()`.
 
 ### Lifecycle lock
 
-`batch()`/`batchOnce()` hold it shared; `forget()`, once-cleanup, `prune()` (shared), and `clear()` (exclusive) coordinate through it. Chunked batches (`count > batch_chunk_size`) release per-file SH locks before the callback — only the lifecycle lock protects the callback window then.
+`batch()`/`batchOnce()` hold it shared; `forget()`, once-cleanup, `prune()` (shared), and `clear()` (exclusive) coordinate through it. Chunked batches (`count > batch_chunk_size`) release per-file SH locks after each chunk and instead hold the **pin lock** (`.pin.lock`, SH) from before the first chunk through the callback; `prune()` takes the pin `LOCK_EX|LOCK_NB` around every single eviction (`evict()`) and stops evicting (`completed=false`) when it can't.
 
 **Deferred deletions**: `forget()`/once-cleanup nested under a shared lifecycle lock cannot upgrade to EX; they queue the deletion (`deferredDeletions` per instance + `LockManager::onOutermostRelease` hook) and `flushDeferredDeletions()` runs it under a real EX lock right after the outermost SH frame releases. `forget()` returns `true` = "deleted or scheduled"; the entry stays alive for the whole callback. Eviction metrics/events fire at flush time. Acquisition timeouts throw `LifecycleLockTimeoutException` (extends `RuntimeException`); `forget()` catches it → warning → `false`, `batch`/`batchOnce`/`prune`/`clear` propagate it.
 

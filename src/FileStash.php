@@ -331,10 +331,11 @@ class FileStash implements FileStashContract
      *
      * When the number of files exceeds batch_chunk_size, retrieval happens in
      * chunks and the per-file shared locks of a chunk are released before the
-     * next chunk starts (bounding open file descriptors). In that mode only
-     * the lifecycle lock — not per-file locks — protects the files during
-     * the callback, so prune/clear/forget of another worker cannot remove
-     * them, but a manual deletion could.
+     * next chunk starts (bounding open file descriptors). In that mode the
+     * shared pin lock — taken before the first chunk and held through the
+     * callback — keeps prune() from evicting entries, and the lifecycle lock
+     * keeps clear()/forget() of other workers out; only a deletion outside
+     * the lock protocol could remove the files.
      *
      * @param  array<int, File>  $files
      * @param  callable(array<int, File>, array<int, string>): mixed  $callback
@@ -350,6 +351,7 @@ class FileStash implements FileStashContract
             $paths = [];
             /** @var array<int, RetrievedFile> $retrieved */
             $retrieved = [];
+            $pin = $isChunked ? $this->acquirePinLock() : null;
 
             try {
                 /** @var array<int, array<int, File>> $chunks */
@@ -372,8 +374,46 @@ class FileStash implements FileStashContract
                 return new BatchResult(null, $paths, $exception);
             } finally {
                 $this->closeRetrievedStreams($retrieved);
+
+                if ($pin !== null) {
+                    flock($pin, LOCK_UN);
+                    fclose($pin);
+                }
             }
         });
+    }
+
+    /**
+     * Take the pin lock shared for a chunked batch.
+     *
+     * prune() holds it exclusively only while deleting a single entry, so
+     * the wait is short; it is bounded by lifecycle_lock_timeout anyway.
+     *
+     * @return resource
+     *
+     * @throws LifecycleLockTimeoutException
+     */
+    protected function acquirePinLock()
+    {
+        $pin = LockManager::openLockFile($this->getPinLockPath());
+
+        if (! LockManager::flockWithTimeout($pin, LOCK_SH, $this->config['lifecycle_lock_timeout'])) {
+            fclose($pin);
+            throw LifecycleLockTimeoutException::create(
+                "Failed to acquire file cache pin lock within {$this->config['lifecycle_lock_timeout']} seconds."
+            );
+        }
+
+        return $pin;
+    }
+
+    /**
+     * Path of the pin lock that chunked batches hold shared for their whole
+     * callback, and prune() takes exclusively for each eviction.
+     */
+    protected function getPinLockPath(): string
+    {
+        return $this->config['path'].'/.pin.lock';
     }
 
     /**
@@ -515,65 +555,80 @@ class FileStash implements FileStashContract
             $totalSize = array_sum(array_column($fileInfos, 'size'));
             $remainingCount = count($fileInfos);
             $remainingFiles = [];
+            $pin = LockManager::openLockFile($this->getPinLockPath());
 
-            if ($stats['completed']) {
-                foreach ($fileInfos as $info) {
-                    if ($this->isPruneTimedOut($startTime, $timeout, 'age-based pruning')) {
-                        $stats['completed'] = false;
-                        break;
-                    }
+            try {
+                if ($stats['completed']) {
+                    foreach ($fileInfos as $info) {
+                        if ($this->isPruneTimedOut($startTime, $timeout, 'age-based pruning')) {
+                            $stats['completed'] = false;
+                            break;
+                        }
 
-                    $isExpired = ($now - $info['atime']) > $allowedAge;
+                        $isExpired = ($now - $info['atime']) > $allowedAge;
 
-                    if (! $isExpired) {
-                        $remainingFiles[] = $info;
+                        if (! $isExpired) {
+                            $remainingFiles[] = $info;
 
-                        continue;
-                    }
+                            continue;
+                        }
 
-                    $result = $this->deleteEntry($info['path'], 'pruned_age', $this->unreadSince($info['atime']));
+                        $result = $this->evict($pin, $info['path'], $info['atime'], 'pruned_age');
 
-                    if ($result === DeleteResult::Skipped) {
-                        $remainingFiles[] = $info;
+                        if ($result === null) {
+                            $stats['completed'] = false;
+                            break;
+                        }
 
-                        continue;
-                    }
+                        if ($result === DeleteResult::Skipped) {
+                            $remainingFiles[] = $info;
 
-                    // Deleted by us or already gone: either way it no longer
-                    // occupies the cache.
-                    $remainingCount--;
-                    $totalSize -= $info['size'];
+                            continue;
+                        }
 
-                    if ($result === DeleteResult::Deleted) {
-                        $stats['deleted']++;
-                    }
-                }
-            }
+                        // Deleted by us or already gone: either way it no
+                        // longer occupies the cache.
+                        $remainingCount--;
+                        $totalSize -= $info['size'];
 
-            if ($stats['completed'] && $totalSize > $allowedSize) {
-                foreach ($remainingFiles as $info) {
-                    if ($totalSize <= $allowedSize) {
-                        break;
-                    }
-
-                    if ($this->isPruneTimedOut($startTime, $timeout, 'size-based pruning', $totalSize - $allowedSize)) {
-                        $stats['completed'] = false;
-                        break;
-                    }
-
-                    $result = $this->deleteEntry($info['path'], 'pruned_size', $this->unreadSince($info['atime']));
-
-                    if ($result === DeleteResult::Skipped) {
-                        continue;
-                    }
-
-                    $remainingCount--;
-                    $totalSize -= $info['size'];
-
-                    if ($result === DeleteResult::Deleted) {
-                        $stats['deleted']++;
+                        if ($result === DeleteResult::Deleted) {
+                            $stats['deleted']++;
+                        }
                     }
                 }
+
+                if ($stats['completed'] && $totalSize > $allowedSize) {
+                    foreach ($remainingFiles as $info) {
+                        if ($totalSize <= $allowedSize) {
+                            break;
+                        }
+
+                        if ($this->isPruneTimedOut($startTime, $timeout, 'size-based pruning', $totalSize - $allowedSize)) {
+                            $stats['completed'] = false;
+                            break;
+                        }
+
+                        $result = $this->evict($pin, $info['path'], $info['atime'], 'pruned_size');
+
+                        if ($result === null) {
+                            $stats['completed'] = false;
+                            break;
+                        }
+
+                        if ($result === DeleteResult::Skipped) {
+                            continue;
+                        }
+
+                        $remainingCount--;
+                        $totalSize -= $info['size'];
+
+                        if ($result === DeleteResult::Deleted) {
+                            $stats['deleted']++;
+                        }
+                    }
+                }
+            } finally {
+                fclose($pin);
             }
 
             // Garbage-collect temp files orphaned by crashed writers. Live
@@ -611,6 +666,34 @@ class FileStash implements FileStashContract
         ));
 
         return $stats;
+    }
+
+    /**
+     * Evict one entry for prune(), unless a chunked batch is running.
+     *
+     * Chunked batches release their per-file locks before the callback and
+     * hold the pin lock shared instead; prune() takes it exclusively around
+     * every single deletion, so a batch starting mid-prune only waits for
+     * one deletion, and prune stops evicting as soon as a batch holds it.
+     *
+     * @param  resource  $pin
+     * @return DeleteResult|null Null when a chunked batch holds the pin lock.
+     */
+    protected function evict($pin, string $path, int $atime, string $reason): ?DeleteResult
+    {
+        if (! flock($pin, LOCK_EX | LOCK_NB)) {
+            $this->logger->info('Prune stopped evicting: a chunked batch is using the cache.', [
+                'path' => $this->config['path'],
+            ]);
+
+            return null;
+        }
+
+        try {
+            return $this->deleteEntry($path, $reason, $this->unreadSince($atime));
+        } finally {
+            flock($pin, LOCK_UN);
+        }
     }
 
     /**

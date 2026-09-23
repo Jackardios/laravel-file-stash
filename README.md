@@ -250,7 +250,7 @@ Pruner  ─── prune()          ──► tries LOCK_EX on file ──► ski
 
 While your callback runs, each cached file is held with a shared lock (`LOCK_SH`). The pruner tries to acquire an exclusive lock (`LOCK_EX`) before deleting — if it can't, it skips the file.
 
-> **Chunked batches are weaker.** When a batch contains more files than `batch_chunk_size` (default 100), files are retrieved chunk by chunk and their shared locks are **released before your callback runs** (this prevents file descriptor exhaustion). During the callback, `forget()`, `clear()`, and `getOnce()`/`batchOnce()` cleanup from other workers are still excluded by the lifecycle lock — but a concurrent `prune()` may evict entries whose age or total-size limits are exceeded. If your callback needs every path to stay valid for its whole duration, set `batch_chunk_size => -1` (no chunking) or keep batches at or below the chunk size.
+> **Chunked batches.** When a batch contains more files than `batch_chunk_size` (default 100), files are retrieved chunk by chunk and their shared locks are released after each chunk (this prevents file descriptor exhaustion). Instead, a chunked batch holds a shared **pin lock** (`.pin.lock` in the cache directory) from the first chunk until the callback returns: while any chunked batch runs, `prune()` evicts nothing (it reports `completed => false` and catches up on its next run). `forget()`, `clear()`, and `getOnce()`/`batchOnce()` cleanup from other workers are excluded by the lifecycle lock as usual. Keep chunked batches short — a batch that runs for hours postpones eviction for as long.
 
 `clear()` goes further — it acquires an exclusive lifecycle lock, so it waits until all `batch()`/`get()` operations finish before deleting anything.
 
