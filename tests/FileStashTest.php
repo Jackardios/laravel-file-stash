@@ -2442,6 +2442,84 @@ class FileStashTest extends TestCase
         $this->assertEquals(1, $fake->metrics()->evictions);
     }
 
+    public function testFacadeReportsTheFakeAsFake()
+    {
+        $this->assertFalse(\Jackardios\FileStash\Facades\FileStash::isFake());
+
+        \Jackardios\FileStash\Facades\FileStash::fake();
+
+        $this->assertTrue(\Jackardios\FileStash\Facades\FileStash::isFake());
+    }
+
+    public function testFakePutFakeAfterRetrievalReplacesContent()
+    {
+        $fake = new FileStashFake($this->app);
+        $file = new GenericFile('https://example.com/data.csv');
+        $read = fn ($file, $path) => file_get_contents($path);
+
+        $this->assertSame('fake-content:https://example.com/data.csv', $fake->get($file, $read));
+
+        $fake->putFake('https://example.com/data.csv', 'updated');
+
+        $this->assertSame('updated', $fake->get($file, $read));
+    }
+
+    public function testFakeForgetInsideBatchIsDeferredUntilTheBatchEnds()
+    {
+        // Mirrors the real cache: the entry stays readable for the rest of
+        // the callback and is deleted once the outermost batch returns.
+        $fake = new FileStashFake($this->app);
+        $file = new GenericFile('https://example.com/a.jpg');
+
+        $path = $fake->batch([$file], function ($files, $paths) use ($fake, $file) {
+            $this->assertTrue($fake->forget($file));
+            $this->assertFileExists($paths[0]);
+            $this->assertSame(0, $fake->metrics()->evictions);
+
+            return $paths[0];
+        });
+
+        $this->assertFileDoesNotExist($path);
+        $this->assertSame(1, $fake->metrics()->evictions);
+        $fake->assertForgotten('https://example.com/a.jpg');
+    }
+
+    public function testFakeGetOnceInsideBatchKeepsTheFileForTheOuterCallback()
+    {
+        $fake = new FileStashFake($this->app);
+        $file = new GenericFile('https://example.com/a.jpg');
+
+        $path = $fake->get($file, function ($file, $outerPath) use ($fake) {
+            $fake->getOnce($file);
+            $this->assertFileExists($outerPath);
+
+            return $outerPath;
+        });
+
+        $this->assertFileDoesNotExist($path);
+        $this->assertSame(1, $fake->metrics()->evictions);
+    }
+
+    public function testFakeDeferredDeletionsRunWhenTheCallbackThrows()
+    {
+        $fake = new FileStashFake($this->app);
+        $file = new GenericFile('https://example.com/a.jpg');
+        $path = $fake->get($file);
+
+        try {
+            $fake->batch([$file], function () use ($fake, $file) {
+                $fake->forget($file);
+
+                throw new \RuntimeException('callback failure');
+            });
+            $this->fail('Expected the callback exception to propagate.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('callback failure', $exception->getMessage());
+        }
+
+        $this->assertFileDoesNotExist($path);
+    }
+
     public function testFakeShouldExist()
     {
         $fake = new FileStashFake($this->app);

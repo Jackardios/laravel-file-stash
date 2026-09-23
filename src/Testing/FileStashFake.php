@@ -5,6 +5,7 @@ namespace Jackardios\FileStash\Testing;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\ParallelTesting;
+use Illuminate\Support\Testing\Fakes\Fake;
 use Jackardios\FileStash\Contracts\File;
 use Jackardios\FileStash\FileStash;
 use PHPUnit\Framework\Assert;
@@ -19,13 +20,15 @@ use Throwable;
  * bookkeeping plus real files on disk — with deterministic content derived
  * from the URL, or content registered via putFake() — so callbacks that
  * read the cached file keep working. Every retrieval is recorded and can be
- * verified with the assert*() helpers.
+ * verified with the assert*() helpers. Like the real cache, forget() and
+ * getOnce()/batchOnce() cleanup inside a batch callback are deferred until
+ * the outermost batch returns.
  *
  * Mirrors Storage::fake(): the fake works in a stable directory under
  * storage/framework/testing (suffixed with the parallel-testing token when
  * present) that is wiped on construction.
  */
-class FileStashFake extends FileStash
+class FileStashFake extends FileStash implements Fake
 {
     /**
      * Number of retrievals per URL.
@@ -54,6 +57,11 @@ class FileStashFake extends FileStash
      * @var array<string, string>
      */
     protected array $customContent = [];
+
+    /**
+     * Nesting depth of running batch callbacks.
+     */
+    protected int $batchDepth = 0;
 
     /**
      * Create a new fake file cache instance.
@@ -102,6 +110,12 @@ class FileStashFake extends FileStash
     public function putFake(string $url, string $content): static
     {
         $this->customContent[$url] = $content;
+
+        // An already materialized file gets the new content as well.
+        $path = $this->pathFor($url);
+        if (file_exists($path)) {
+            file_put_contents($path, $content);
+        }
 
         return $this;
     }
@@ -157,7 +171,15 @@ class FileStashFake extends FileStash
 
         $paths = array_map(fn (File $file): string => $this->materialize($file), $files);
 
-        return $callback($files, $paths);
+        $this->batchDepth++;
+
+        try {
+            return $callback($files, $paths);
+        } finally {
+            if (--$this->batchDepth === 0) {
+                $this->flushDeferredDeletions();
+            }
+        }
     }
 
     /**
@@ -169,10 +191,7 @@ class FileStashFake extends FileStash
             return $this->batch($files, $callback, $throwOnLock);
         } finally {
             foreach ($files as $file) {
-                $path = $this->pathFor($file->getUrl());
-                if (file_exists($path) && @unlink($path)) {
-                    $this->metrics->evictions++;
-                }
+                $this->deleteFake($this->pathFor($file->getUrl()));
             }
         }
     }
@@ -216,13 +235,7 @@ class FileStashFake extends FileStash
             return false;
         }
 
-        if (@unlink($path)) {
-            $this->metrics->evictions++;
-
-            return true;
-        }
-
-        return false;
+        return $this->deleteFake($path);
     }
 
     /**
@@ -321,6 +334,40 @@ class FileStashFake extends FileStash
         }
 
         return $path;
+    }
+
+    /**
+     * Delete a fake cached file, or queue the deletion while a batch
+     * callback runs (the file may still be in use there).
+     */
+    protected function deleteFake(string $path): bool
+    {
+        if ($this->batchDepth > 0) {
+            $this->deferredDeletions[] = ['path' => $path, 'reason' => 'deferred'];
+
+            return true;
+        }
+
+        if (file_exists($path) && @unlink($path)) {
+            $this->metrics->evictions++;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function flushDeferredDeletions(): void
+    {
+        $deletions = $this->deferredDeletions;
+        $this->deferredDeletions = [];
+
+        foreach (array_unique(array_column($deletions, 'path')) as $path) {
+            $this->deleteFake($path);
+        }
     }
 
     /**

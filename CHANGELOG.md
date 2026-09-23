@@ -170,7 +170,10 @@ for the full migration guide, including how to switch workers over.
   `assertNothingRetrieved()`, `assertForgotten()`, `putFake()`, and
   `shouldExist()`. Like `Storage::fake()`, it works in a stable directory
   under `storage/framework/testing` (suffixed with the parallel-testing
-  token) that is wiped on construction.
+  token) that is wiped on construction. It implements Laravel's `Fake`
+  marker (`FileStash::isFake()`), `putFake()` also replaces the content of
+  an already retrieved file, and `forget()`/`getOnce()` inside a batch
+  callback are deferred until the batch returns, as in the real cache.
 
 ### Fixed
 
