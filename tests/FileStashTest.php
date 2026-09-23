@@ -3302,6 +3302,41 @@ class FileStashTest extends TestCase
         $this->assertCount(1, array_filter($dispatched, fn ($e) => $e instanceof CachePruneCompleted));
     }
 
+    /**
+     * prune() only collects temp files of crashed writers: a young temp file
+     * may belong to a writer between fopen() and flock() (60 s grace), and a
+     * locked one to a live (slow) download, however old.
+     */
+    #[DataProvider('tempFileProvider')]
+    public function testPruneCollectsOnlyOrphanedTempFiles(int $age, bool $locked, bool $collected)
+    {
+        $cache = $this->createCache();
+        $tempPath = $this->cachePath.'/'.str_repeat('a', 64).'.123.'.str_repeat('b', 16).'.tmp';
+        file_put_contents($tempPath, 'partial');
+        touch($tempPath, time() - $age);
+        $writer = fopen($tempPath, 'rb');
+        if ($locked) {
+            $this->assertTrue(flock($writer, LOCK_EX));
+        }
+
+        try {
+            $cache->prune();
+        } finally {
+            fclose($writer);
+        }
+
+        $this->assertSame(! $collected, file_exists($tempPath));
+    }
+
+    public static function tempFileProvider(): array
+    {
+        return [
+            'within the grace period' => [55, false, false],
+            'past the grace period' => [65, false, true],
+            'locked by a live download' => [3600, true, false],
+        ];
+    }
+
     public function testPruneOnMissingDirectoryDispatchesCompletionEvent()
     {
         $dispatched = [];
