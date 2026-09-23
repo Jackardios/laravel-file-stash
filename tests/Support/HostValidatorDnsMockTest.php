@@ -59,7 +59,9 @@ class HostValidatorDnsMockTest extends TestCase
         // Public A record, private AAAA: curl may connect over IPv6, so the
         // AAAA must be checked too.
         $this->getFunctionMock(self::NS, 'dns_get_record')
-            ->expects($this->once())->willReturn([
+            ->expects($this->once())
+            ->with('dual-stack.example', DNS_A | DNS_AAAA)
+            ->willReturn([
                 ['type' => 'A', 'ip' => '93.184.216.34'],
                 ['type' => 'AAAA', 'ipv6' => '::1'],
             ]);
@@ -83,6 +85,32 @@ class HostValidatorDnsMockTest extends TestCase
 
         $validator = new HostValidator(null, true);
         $this->assertFalse($validator->isPrivateHost('ipv6-only.example'));
+    }
+
+    public function testPrivateARecordFromDnsBlocksHostDespitePublicHostsEntry()
+    {
+        // The two sources are unioned: a private A record from DNS counts even
+        // when gethostbynamel reports only public addresses.
+        $this->getFunctionMock(self::NS, 'dns_get_record')
+            ->expects($this->once())->willReturn([
+                ['type' => 'A', 'ip' => '10.0.0.1'],
+            ]);
+        $this->getFunctionMock(self::NS, 'gethostbynamel')
+            ->expects($this->once())->willReturn(['93.184.216.34']);
+
+        $validator = new HostValidator(null, true);
+        $this->assertTrue($validator->isPrivateHost('split.example'));
+    }
+
+    public function testIpLiteralsAreClassifiedWithoutDns()
+    {
+        $this->getFunctionMock(self::NS, 'dns_get_record')->expects($this->never());
+        $this->getFunctionMock(self::NS, 'gethostbynamel')->expects($this->never());
+
+        $validator = new HostValidator(null, true);
+        $this->assertFalse($validator->isPrivateHost('[2600::1]'));
+        $this->assertFalse($validator->isPrivateHost('93.184.216.34'));
+        $this->assertTrue($validator->isPrivateHost('[::1]'));
     }
 
     public function testDnsQueryFailureFallsBackToGethostbynamel()

@@ -4,6 +4,7 @@ namespace Jackardios\FileStash\Tests\Console\Commands;
 
 use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
 use Jackardios\FileStash\Tests\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 class PruneFileStashTest extends TestCase
 {
@@ -50,6 +51,28 @@ class PruneFileStashTest extends TestCase
             ->expectsOutput('  Remaining: 50 files')
             ->expectsOutput('  Total size: 1.00 GB')
             ->assertExitCode(0);
+    }
+
+    #[DataProvider('sizeProvider')]
+    public function testTotalSizeIsHumanReadable(int $bytes, string $formatted)
+    {
+        $this->fakePruneStats(['completed' => true, 'deleted' => 0, 'remaining' => 1, 'total_size' => $bytes]);
+
+        $this->artisan('file-stash:prune')
+            ->expectsOutput("  Total size: {$formatted}")
+            ->assertExitCode(0);
+    }
+
+    public static function sizeProvider(): array
+    {
+        return [
+            'zero' => [0, '0 B'],
+            'one byte' => [1, '1.00 B'],
+            'just below a KB' => [1023, '1023.00 B'],
+            'fractional KB' => [1536, '1.50 KB'],
+            'just below a MB' => [1024 ** 2 - 1, '1024.00 KB'],
+            'beyond the largest unit' => [2 * 1024 ** 5, '2048.00 TB'],
+        ];
     }
 
     public function testPruneSilentSuppressesOutput()

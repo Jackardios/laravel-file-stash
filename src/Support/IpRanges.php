@@ -123,7 +123,7 @@ final class IpRanges
             return self::$parsed;
         }
 
-        $parsed = [4 => [], 16 => []];
+        $parsed = [];
         foreach ([self::IPV4_BLOCKED, self::IPV6_BLOCKED] as $list) {
             foreach ($list as $cidr) {
                 [$address, $bits] = explode('/', $cidr);
@@ -139,7 +139,7 @@ final class IpRanges
     private static function inRange(string $bytes, string $prefix, int $bits): bool
     {
         $wholeBytes = intdiv($bits, 8);
-        if ($wholeBytes > 0 && substr($bytes, 0, $wholeBytes) !== substr($prefix, 0, $wholeBytes)) {
+        if (substr($bytes, 0, $wholeBytes) !== substr($prefix, 0, $wholeBytes)) {
             return false;
         }
 

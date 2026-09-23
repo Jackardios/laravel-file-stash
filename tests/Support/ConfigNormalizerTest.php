@@ -86,6 +86,7 @@ class ConfigNormalizerTest extends TestCase
             'empty string' => [''],
             'whitespace' => ['   '],
             'relative path' => ['relative/cache/dir'],
+            'relative path containing a drive' => ['cache/C:\\files'],
             'null' => [null],
             'integer' => [42],
             'array' => [['/tmp/cache']],
@@ -135,6 +136,12 @@ class ConfigNormalizerTest extends TestCase
         $this->assertSame(9007199254740993, $this->normalize(['max_size' => '9.007199254740993e15'])['max_size']);
         $this->assertSame(1500, $this->normalize(['max_size' => '1.5E+3'])['max_size']);
         $this->assertSame(-1, $this->normalize(['max_file_size' => ' -1 '])['max_file_size']);
+        // Zero fractions, leading zeros, and exponents that land on an integer.
+        $this->assertSame(1, $this->normalize(['max_age' => '1.0'])['max_age']);
+        $this->assertSame(25, $this->normalize(['max_age' => '2.50e1'])['max_age']);
+        $this->assertSame(7, $this->normalize(['max_age' => '007'])['max_age']);
+        $this->assertSame(1, $this->normalize(['max_age' => '1e0'])['max_age']);
+        $this->assertSame(0, $this->normalize(['http_retries' => '.0'])['http_retries']);
     }
 
     #[DataProvider('invalidValueProvider')]
@@ -160,6 +167,10 @@ class ConfigNormalizerTest extends TestCase
             'max_size float 2^63' => ['max_size', 9.2233720368547758E+18],
             'max_size fractional exponent string' => ['max_size', '12e-1'],
             'max_size huge exponent string' => ['max_size', '1e9999'],
+            'max_size trailing garbage' => ['max_size', '12abc'],
+            'max_size leading garbage' => ['max_size', 'x12'],
+            'max_size exponent without digits' => ['max_size', '1e'],
+            'max_size lone point' => ['max_size', '.'],
             'lock_wait_timeout NAN' => ['lock_wait_timeout', NAN],
             'timeout INF' => ['timeout', INF],
             'read_timeout overflowing string' => ['read_timeout', '1e999'],
