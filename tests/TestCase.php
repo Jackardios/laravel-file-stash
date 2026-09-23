@@ -2,26 +2,47 @@
 
 namespace Jackardios\FileStash\Tests;
 
-use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Jackardios\FileStash\FileStashServiceProvider;
+use Orchestra\Testbench\TestCase as BaseTestCase;
 
 class TestCase extends BaseTestCase
 {
     /**
-     * Boots the application.
-     *
+     * Per-test storage directory, so the fake and the default cache path
+     * never write into vendor/ and parallel runs never share state.
+     */
+    protected string $storagePath;
+
+    protected function setUp(): void
+    {
+        $this->storagePath = sys_get_temp_dir().'/file_stash_storage_'.bin2hex(random_bytes(8));
+
+        parent::setUp();
+    }
+
+    protected function tearDown(): void
+    {
+        parent::tearDown();
+
+        (new Filesystem)->deleteDirectory($this->storagePath);
+    }
+
+    /**
+     * @param  Application  $app
+     * @return array<int, class-string>
+     */
+    protected function getPackageProviders($app): array
+    {
+        return [FileStashServiceProvider::class];
+    }
+
+    /**
      * @return Application
      */
-    public function createApplication()
+    protected function resolveApplication()
     {
-        // We create a full Laravel app here for testing purposes. The FileStash
-        // needs access to the application config and the filesystem singleton.
-        $app = require __DIR__.'/../vendor/laravel/laravel/bootstrap/app.php';
-        $app->make(Kernel::class)->bootstrap();
-        $app->register(FileStashServiceProvider::class);
-
-        return $app;
+        return parent::resolveApplication()->useStoragePath($this->storagePath);
     }
 }

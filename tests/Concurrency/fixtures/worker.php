@@ -25,12 +25,16 @@
  * {"ok": true, "results": [...]} or {"ok": false, "error": {"class": "...", "message": "..."}}
  */
 
-use Illuminate\Contracts\Console\Kernel;
 use Jackardios\FileStash\FileStash;
 use Jackardios\FileStash\FileStashServiceProvider;
 use Jackardios\FileStash\GenericFile;
+use Orchestra\Testbench\Foundation\Application;
 
 require __DIR__.'/../../../vendor/autoload.php';
+
+// Diagnostics (e.g. deprecations of a PHP version in development) must never
+// corrupt the JSON document on stdout.
+ini_set('display_errors', 'stderr');
 
 $task = json_decode(base64_decode($argv[1]), true);
 if (! is_array($task)) {
@@ -38,9 +42,22 @@ if (! is_array($task)) {
     exit(1);
 }
 
-$app = require __DIR__.'/../../../vendor/laravel/laravel/bootstrap/app.php';
-$app->make(Kernel::class)->bootstrap();
-$app->register(FileStashServiceProvider::class);
+// Private bootstrap cache: concurrent workers must not rewrite (and read
+// half-replaced) the shared testbench manifest in vendor/.
+$bootstrapCache = sys_get_temp_dir().'/file_stash_worker_'.getmypid().'_'.bin2hex(random_bytes(4));
+mkdir($bootstrapCache, 0777, true);
+register_shutdown_function(static function () use ($bootstrapCache): void {
+    array_map('unlink', glob($bootstrapCache.'/*') ?: []);
+    @rmdir($bootstrapCache);
+});
+foreach (['APP_PACKAGES_CACHE' => 'packages.php', 'APP_SERVICES_CACHE' => 'services.php'] as $name => $file) {
+    putenv("{$name}={$bootstrapCache}/{$file}");
+}
+
+Application::create(options: ['extra' => [
+    'providers' => [FileStashServiceProvider::class],
+    'dont-discover' => ['*'],
+]]);
 
 foreach (($task['disks'] ?? []) as $name => $diskConfig) {
     config(["filesystems.disks.{$name}" => $diskConfig]);

@@ -26,29 +26,26 @@ abstract class ConcurrencyTestCase extends TestCase
     {
         parent::setUp();
 
+        $this->files = new Filesystem;
+
         if (PHP_OS_FAMILY === 'Windows') {
             $this->markTestSkipped('Concurrency tests require a POSIX environment.');
         }
 
-        $this->files = new Filesystem;
-        $this->cachePath = sys_get_temp_dir().'/file_stash_concurrency_'.uniqid('', true);
+        $this->cachePath = sys_get_temp_dir().'/file_stash_concurrency_'.bin2hex(random_bytes(8));
         $this->files->makeDirectory($this->cachePath, 0755, true, true);
     }
 
     protected function tearDown(): void
     {
         foreach ($this->serverHandles as $handle) {
-            $status = proc_get_status($handle['proc']);
-            // The built-in server forks PHP_CLI_SERVER_WORKERS children; SIGKILL on
-            // the master orphans them, and they keep inherited fds (e.g. PHPUnit's
-            // stdout pipe) open forever. Kill the children first.
-            exec('pkill -KILL -P '.((int) $status['pid']).' 2>/dev/null');
-            proc_terminate($handle['proc'], defined('SIGKILL') ? SIGKILL : 9);
-            proc_close($handle['proc']);
+            $this->killServer($handle['proc']);
         }
         $this->serverHandles = [];
 
-        $this->files->deleteDirectory($this->cachePath);
+        if (isset($this->cachePath)) {
+            $this->files->deleteDirectory($this->cachePath);
+        }
 
         parent::tearDown();
     }
@@ -60,40 +57,80 @@ abstract class ConcurrencyTestCase extends TestCase
      */
     protected function startSlowServer(int $phpWorkers = 4): array
     {
-        $port = $this->findFreePort();
         $counterFile = $this->cachePath.'/.server-requests.log';
         touch($counterFile);
 
-        $command = [PHP_BINARY, '-S', "127.0.0.1:{$port}", __DIR__.'/fixtures/slow-server.php'];
-        $env = array_merge($_ENV, getenv(), [
-            'SLOW_SERVER_COUNTER' => $counterFile,
-            'PHP_CLI_SERVER_WORKERS' => (string) $phpWorkers,
-        ]);
+        // The free port is probed before php -S binds it, so another process
+        // may grab it in between: the readiness probe checks a per-server
+        // nonce, and a server that failed to bind is retried on a new port.
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $port = $this->findFreePort();
+            $nonce = bin2hex(random_bytes(8));
 
-        $proc = proc_open($command, [
-            0 => ['file', '/dev/null', 'r'],
-            1 => ['file', '/dev/null', 'w'],
-            2 => ['file', '/dev/null', 'w'],
-        ], $pipes, __DIR__.'/fixtures', $env);
+            $command = [PHP_BINARY, '-S', "127.0.0.1:{$port}", __DIR__.'/fixtures/slow-server.php'];
+            if (function_exists('pcntl_exec') && function_exists('posix_setpgid')) {
+                // Run the server as a process group leader, so tearDown can
+                // kill it together with its PHP_CLI_SERVER_WORKERS children.
+                $command = [PHP_BINARY, __DIR__.'/fixtures/process-group.php', ...$command];
+            }
 
-        if (! is_resource($proc)) {
-            throw new RuntimeException('Failed to start slow server.');
+            $env = array_merge($_ENV, getenv(), [
+                'SLOW_SERVER_COUNTER' => $counterFile,
+                'SLOW_SERVER_NONCE' => $nonce,
+                'PHP_CLI_SERVER_WORKERS' => (string) $phpWorkers,
+            ]);
+
+            $proc = proc_open($command, [
+                0 => ['file', '/dev/null', 'r'],
+                1 => ['file', '/dev/null', 'w'],
+                2 => ['file', '/dev/null', 'w'],
+            ], $pipes, __DIR__.'/fixtures', $env);
+
+            if (! is_resource($proc)) {
+                throw new RuntimeException('Failed to start slow server.');
+            }
+
+            $baseUrl = "http://127.0.0.1:{$port}";
+
+            if (! $this->waitForServer($proc, $baseUrl, $nonce)) {
+                $this->killServer($proc);
+
+                continue;
+            }
+
+            $this->serverHandles[] = ['proc' => $proc, 'pipes' => $pipes];
+
+            return [
+                'host' => '127.0.0.1',
+                'port' => $port,
+                'base_url' => $baseUrl,
+                'counter_file' => $counterFile,
+            ];
         }
 
-        $this->serverHandles[] = ['proc' => $proc, 'pipes' => $pipes];
+        throw new RuntimeException('Slow server did not become ready in time.');
+    }
 
-        $baseUrl = "http://127.0.0.1:{$port}";
-        $this->waitForServer($baseUrl);
+    /**
+     * Kill a slow server together with its forked worker processes.
+     *
+     * @param  resource  $proc
+     */
+    private function killServer($proc): void
+    {
+        $pid = (int) proc_get_status($proc)['pid'];
 
-        // Reset counter: the readiness probe above is not part of the test.
-        file_put_contents($counterFile, '');
+        if (function_exists('pcntl_exec') && function_exists('posix_setpgid')) {
+            // The server leads its own process group (see startSlowServer).
+            posix_kill(-$pid, SIGKILL);
+        } else {
+            // SIGKILL on the master alone orphans the forked workers, and
+            // they keep inherited fds (e.g. PHPUnit's stdout pipe) open.
+            exec('pkill -KILL -P '.$pid.' 2>/dev/null');
+        }
 
-        return [
-            'host' => '127.0.0.1',
-            'port' => $port,
-            'base_url' => $baseUrl,
-            'counter_file' => $counterFile,
-        ];
+        proc_terminate($proc, defined('SIGKILL') ? SIGKILL : 9);
+        proc_close($proc);
     }
 
     /**
@@ -238,20 +275,28 @@ abstract class ConcurrencyTestCase extends TestCase
         return $port;
     }
 
-    private function waitForServer(string $baseUrl, float $timeoutSeconds = 10.0): void
+    /**
+     * @param  resource  $proc
+     */
+    private function waitForServer($proc, string $baseUrl, string $nonce, float $timeoutSeconds = 10.0): bool
     {
         $deadline = microtime(true) + $timeoutSeconds;
 
         while (microtime(true) < $deadline) {
+            if (! proc_get_status($proc)['running']) {
+                // Most likely the port was taken before php -S could bind it.
+                return false;
+            }
+
             $context = stream_context_create(['http' => ['timeout' => 1, 'ignore_errors' => true]]);
-            $response = @file_get_contents($baseUrl.'/__ready?chunks=1', false, $context);
-            if ($response !== false) {
-                return;
+            $response = @file_get_contents($baseUrl.'/__ready', false, $context);
+            if ($response === $nonce) {
+                return true;
             }
 
             usleep(50000);
         }
 
-        throw new RuntimeException('Slow server did not become ready in time.');
+        return false;
     }
 }

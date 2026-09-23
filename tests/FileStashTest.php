@@ -47,7 +47,7 @@ class FileStashTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $suffix = uniqid('', true);
+        $suffix = bin2hex(random_bytes(8));
         $this->cachePath = sys_get_temp_dir().'/file_stash_test_'.$suffix;
         $this->diskPath = sys_get_temp_dir().'/file_stash_disk_'.$suffix;
         $this->noop = fn ($file, $path) => $path;
@@ -1099,7 +1099,6 @@ class FileStashTest extends TestCase
         $cacheWithTrailingSlash = new FileStash(['path' => $this->cachePath.'/']);
 
         $method = new ReflectionMethod(FileStash::class, 'getLifecycleLockPath');
-        $method->setAccessible(true);
 
         $this->assertSame(
             $method->invoke($cacheWithPlainPath),
@@ -1258,7 +1257,7 @@ class FileStashTest extends TestCase
 
     public function testPruneOnNonExistentPath()
     {
-        $nonExistentPath = sys_get_temp_dir().'/non_existent_path_'.uniqid();
+        $nonExistentPath = sys_get_temp_dir().'/non_existent_path_'.bin2hex(random_bytes(8));
         $cache = new FileStash(['path' => $nonExistentPath]);
 
         $this->assertSame(['deleted' => 0, 'remaining' => 0, 'total_size' => 0, 'completed' => true], $cache->prune());
@@ -1266,7 +1265,7 @@ class FileStashTest extends TestCase
 
     public function testClearOnNonExistentPath()
     {
-        $nonExistentPath = sys_get_temp_dir().'/non_existent_path_'.uniqid();
+        $nonExistentPath = sys_get_temp_dir().'/non_existent_path_'.bin2hex(random_bytes(8));
         $cache = new FileStash(['path' => $nonExistentPath]);
 
         $this->assertDirectoryDoesNotExist($nonExistentPath);
@@ -1276,7 +1275,7 @@ class FileStashTest extends TestCase
 
     public function testRetrieveCreatesPathIfNotExists()
     {
-        $newPath = sys_get_temp_dir().'/new_cache_path_'.uniqid();
+        $newPath = sys_get_temp_dir().'/new_cache_path_'.bin2hex(random_bytes(8));
         $this->assertDirectoryDoesNotExist($newPath);
 
         $file = new GenericFile('fixtures://test-file.txt');
@@ -1400,7 +1399,7 @@ class FileStashTest extends TestCase
 
     public function testForgetOnColdCacheDoesNotCreateDirectory()
     {
-        $coldPath = sys_get_temp_dir().'/file_stash_cold_'.uniqid();
+        $coldPath = sys_get_temp_dir().'/file_stash_cold_'.bin2hex(random_bytes(8));
         $cache = new FileStash(['path' => $coldPath]);
 
         $this->assertFalse($cache->forget(new GenericFile('https://example.com/file.jpg')));
@@ -1863,7 +1862,6 @@ class FileStashTest extends TestCase
         $file = new GenericFile('https://example.com/image.jpg');
 
         $method = new ReflectionMethod($cache, 'getCachedPath');
-        $method->setAccessible(true);
 
         $path1 = $method->invoke($cache, $file);
         $path2 = $method->invoke($cache, $file);
@@ -2669,7 +2667,7 @@ class FileStashTest extends TestCase
             $dispatched[] = $event;
         });
 
-        $nonExistentPath = sys_get_temp_dir().'/non_existent_path_'.uniqid();
+        $nonExistentPath = sys_get_temp_dir().'/non_existent_path_'.bin2hex(random_bytes(8));
         $cache = new FileStash(
             ['path' => $nonExistentPath, 'events_enabled' => true],
             null,

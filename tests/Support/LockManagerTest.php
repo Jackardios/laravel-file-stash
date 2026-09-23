@@ -15,7 +15,7 @@ class LockManagerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->lockPath = sys_get_temp_dir().'/file_stash_lock_'.uniqid('', true).'.lock';
+        $this->lockPath = sys_get_temp_dir().'/file_stash_lock_'.bin2hex(random_bytes(8)).'.lock';
     }
 
     protected function tearDown(): void

@@ -43,7 +43,7 @@ class FileStashServiceProviderTest extends TestCase
 
     public function testConcreteClassResolvesToSameSingleton()
     {
-        config(['file-stash.path' => sys_get_temp_dir().'/file_stash_provider_'.uniqid()]);
+        config(['file-stash.path' => sys_get_temp_dir().'/file_stash_provider_'.bin2hex(random_bytes(8))]);
 
         $viaName = $this->app->make('file-stash');
         $viaContract = $this->app->make(FileStashContract::class);

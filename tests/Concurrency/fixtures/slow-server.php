@@ -17,7 +17,15 @@
  *                     still streamed as a decoy (redirect responses may carry
  *                     a body, and clients must ignore it)
  *   redirect_status — status for the redirect response (default 301)
+ *
+ * GET /__ready answers with SLOW_SERVER_NONCE (readiness probe; not counted).
  */
+if (parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) === '/__ready') {
+    echo (string) getenv('SLOW_SERVER_NONCE');
+
+    return;
+}
+
 $counterFile = getenv('SLOW_SERVER_COUNTER');
 if (is_string($counterFile) && $counterFile !== '') {
     file_put_contents(

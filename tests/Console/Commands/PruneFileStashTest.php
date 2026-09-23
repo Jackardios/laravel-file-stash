@@ -85,7 +85,6 @@ class PruneFileStashTest extends TestCase
     {
         $command = new PruneFileStash;
         $method = new \ReflectionMethod($command, 'formatBytes');
-        $method->setAccessible(true);
 
         $this->assertEquals('0 B', $method->invoke($command, 0));
     }
@@ -94,7 +93,6 @@ class PruneFileStashTest extends TestCase
     {
         $command = new PruneFileStash;
         $method = new \ReflectionMethod($command, 'formatBytes');
-        $method->setAccessible(true);
 
         $this->assertEquals('1.00 GB', $method->invoke($command, 1073741824));
     }

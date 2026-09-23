@@ -45,8 +45,8 @@ class FileStashFunctionMockTest extends TestCase
     {
         parent::setUp();
 
-        $this->cachePath = sys_get_temp_dir().'/file_stash_test_'.uniqid();
-        $this->diskPath = sys_get_temp_dir().'/file_stash_disk_'.uniqid();
+        $this->cachePath = sys_get_temp_dir().'/file_stash_test_'.bin2hex(random_bytes(8));
+        $this->diskPath = sys_get_temp_dir().'/file_stash_disk_'.bin2hex(random_bytes(8));
         $this->files = new Filesystem;
         $this->noop = fn ($file, $path) => $path;
 
@@ -632,7 +632,7 @@ class FileStashFunctionMockTest extends TestCase
         $baseTime = 1000000;
         $timeMock = $this->getFunctionMock('Jackardios\\FileStash', 'time');
         $callCount = 0;
-        $timeMock->expects($this->any())->willReturnCallback(function () use (&$callCount, $baseTime) {
+        $timeMock->expects($this->atLeastOnce())->willReturnCallback(function () use (&$callCount, $baseTime) {
             $callCount++;
             // First 3 calls return base time (for startTime and initial checks)
             // After that, return base time + timeout + 1 to trigger timeout

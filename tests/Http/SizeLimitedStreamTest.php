@@ -13,7 +13,7 @@ class SizeLimitedStreamTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->path = sys_get_temp_dir().'/file_stash_stream_'.uniqid();
+        $this->path = sys_get_temp_dir().'/file_stash_stream_'.bin2hex(random_bytes(8));
     }
 
     protected function tearDown(): void
@@ -133,7 +133,7 @@ class SizeLimitedStreamTest extends TestCase
     {
         $this->expectException(RuntimeException::class);
 
-        new SizeLimitedStream('/nonexistent-dir/'.uniqid().'/file', -1);
+        new SizeLimitedStream('/nonexistent-dir/'.bin2hex(random_bytes(8)).'/file', -1);
     }
 
     public function testWriteAfterDetachThrows(): void
