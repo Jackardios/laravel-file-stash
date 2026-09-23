@@ -37,9 +37,10 @@ class RemoteFetcher
     protected const MAX_BACKOFF_MS = 30000;
 
     /**
-     * HTTP client used for remote file operations.
+     * HTTP client used for remote file operations: the injected one, or the
+     * default client once the first request built it (see client()).
      */
-    protected Client $client;
+    protected ?Client $client;
 
     /**
      * Validator applied to request URLs and every redirect target.
@@ -55,7 +56,7 @@ class RemoteFetcher
         protected LoggerInterface $logger = new NullLogger,
     ) {
         $this->hostValidator = new HostValidator($config['allowed_hosts'], $config['block_private_hosts']);
-        $this->client = $client ?? $this->makeClient();
+        $this->client = $client;
     }
 
     /**
@@ -129,7 +130,7 @@ class RemoteFetcher
             $sink = new SizeLimitedStream($targetPath, $maxBytes);
 
             try {
-                $response = $this->client->get(Url::encode($file->getUrl()), [
+                $response = $this->client()->get(Url::encode($file->getUrl()), [
                     ...$this->requestOptions(),
                     'sink' => $sink,
                     // No ResponseInterface type on purpose: MockHandler passes
@@ -218,7 +219,7 @@ class RemoteFetcher
     protected function head(File $file): ResponseInterface
     {
         try {
-            $response = $this->client->head(Url::encode($file->getUrl()), $this->requestOptions());
+            $response = $this->client()->head(Url::encode($file->getUrl()), $this->requestOptions());
         } catch (GuzzleException $exception) {
             $statusCode = $this->extractStatusCode($exception);
             if ($statusCode >= 400) {
@@ -385,6 +386,15 @@ class RemoteFetcher
         }
 
         return $options;
+    }
+
+    /**
+     * The HTTP client, building the default one on first use: a cache that
+     * only serves storage disks or hot entries never pays for it.
+     */
+    protected function client(): Client
+    {
+        return $this->client ??= $this->makeClient();
     }
 
     /**

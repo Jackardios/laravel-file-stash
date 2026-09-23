@@ -143,9 +143,7 @@ class FileStashTest extends TestCase
         $fetcherProperty = new \ReflectionProperty($cache, 'remoteFetcher');
         $fetcher = $fetcherProperty->getValue($cache);
 
-        $clientProperty = new \ReflectionProperty($fetcher, 'client');
-
-        return $clientProperty->getValue($fetcher)->getConfig();
+        return (new ReflectionMethod($fetcher, 'client'))->invoke($fetcher)->getConfig();
     }
 
     public function testGetExists()
