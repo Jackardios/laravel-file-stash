@@ -294,6 +294,13 @@ final class ConfigNormalizer
      */
     private static function toPath(mixed $value): string
     {
+        if ($value === null) {
+            throw InvalidConfigurationException::create(
+                'path',
+                "is required; when constructing the cache yourself, pass the package config: new FileStash(config('file-stash'), \$client)"
+            );
+        }
+
         if (! is_string($value) || trim($value) === '') {
             throw InvalidConfigurationException::create('path', 'is required and must be a non-empty string');
         }

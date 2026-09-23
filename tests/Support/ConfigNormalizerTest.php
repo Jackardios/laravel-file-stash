@@ -63,6 +63,14 @@ class ConfigNormalizerTest extends TestCase
         ConfigNormalizer::normalize([]);
     }
 
+    public function testMissingPathHintsAtPassingThePackageConfig(): void
+    {
+        // v4 filled in defaults for `new FileStash([], $client)`; v5 does not.
+        $this->expectExceptionMessage("new FileStash(config('file-stash'), \$client)");
+
+        ConfigNormalizer::normalize(['path' => null]);
+    }
+
     #[DataProvider('invalidPathProvider')]
     public function testPathRejectsInvalidValues(mixed $path): void
     {
