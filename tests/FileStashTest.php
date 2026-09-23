@@ -1146,59 +1146,48 @@ class FileStashTest extends TestCase
         $this->assertTrue($cache->exists($file));
     }
 
-    public function testBatchChunking()
+    /**
+     * Chunked batches release each chunk's per-file shared locks before the
+     * next chunk (bounding open descriptors), so no entry is locked while the
+     * callback runs; unchunked batches keep every entry locked. flock locks
+     * belong to the open file description, so a second descriptor in this
+     * process probes them like another process would.
+     */
+    #[DataProvider('chunkingProvider')]
+    public function testBatchChunkingControlsEntryLocksDuringCallback(string $method, int $chunkSize, bool $locked)
     {
-        // Create 5 different files on disk
-        for ($i = 0; $i < 5; $i++) {
-            $this->app['files']->put("{$this->diskPath}/chunk-file-{$i}.txt", "content-{$i}");
-        }
-
         $files = [];
         for ($i = 0; $i < 5; $i++) {
+            $this->app['files']->put("{$this->diskPath}/chunk-file-{$i}.txt", "content-{$i}");
             $files[] = new GenericFile("test://chunk-file-{$i}.txt");
         }
 
-        $cache = new FileStash([
-            'path' => $this->cachePath,
-            'batch_chunk_size' => 2, // Process in chunks of 2
-        ]);
+        $cache = $this->createCache(['batch_chunk_size' => $chunkSize]);
 
-        $callbackCalled = false;
-        $paths = $cache->batch($files, function ($receivedFiles, $receivedPaths) use (&$callbackCalled) {
-            $callbackCalled = true;
-            $this->assertCount(5, $receivedFiles);
-            $this->assertCount(5, $receivedPaths);
-            // All paths should be unique (different files → different cache paths)
-            $this->assertCount(5, array_unique($receivedPaths));
+        $contents = $cache->{$method}($files, function ($receivedFiles, $paths) use ($locked) {
+            $this->assertSame(array_keys($receivedFiles), array_keys($paths));
 
-            return $receivedPaths;
+            foreach ($paths as $path) {
+                $probe = fopen($path, 'rb');
+                $this->assertSame(! $locked, flock($probe, LOCK_EX | LOCK_NB));
+                fclose($probe);
+            }
+
+            return array_map('file_get_contents', $paths);
         });
 
-        $this->assertTrue($callbackCalled);
-        $this->assertCount(5, $paths);
-        $this->assertCount(5, array_unique($paths));
+        $this->assertSame(['content-0', 'content-1', 'content-2', 'content-3', 'content-4'], $contents);
     }
 
-    public function testBatchChunkingDisabled()
+    public static function chunkingProvider(): array
     {
-        $this->app['files']->put("{$this->diskPath}/test-image.jpg", 'abc');
-
-        $files = [];
-        for ($i = 0; $i < 5; $i++) {
-            $files[] = new GenericFile('test://test-image.jpg');
-        }
-
-        // batch_chunk_size = -1 disables chunking
-        $cache = new FileStash([
-            'path' => $this->cachePath,
-            'batch_chunk_size' => -1,
-        ]);
-
-        $paths = $cache->batch($files, function ($files, $paths) {
-            return $paths;
-        });
-
-        $this->assertCount(5, $paths);
+        return [
+            'batch, chunked' => ['batch', 2, false],
+            'batch, unchunked' => ['batch', -1, true],
+            'batch, within one chunk' => ['batch', 5, true],
+            'batchOnce, chunked' => ['batchOnce', 2, false],
+            'batchOnce, unchunked' => ['batchOnce', -1, true],
+        ];
     }
 
     public function testHttpRetryOnServerError()
