@@ -177,7 +177,10 @@ class FileStashTest extends TestCase
     }
 
     /**
-     * Get the Guzzle client config from a FileStash instance (via its RemoteFetcher).
+     * Get the default Guzzle client's config from a FileStash instance (via
+     * its RemoteFetcher). Reflection is the only way to observe the default
+     * client without a real HTTP server; per-request options are captured
+     * with captureRequestOptions() instead.
      */
     protected function getClientConfig(FileStash $cache): array
     {
@@ -2014,7 +2017,7 @@ class FileStashTest extends TestCase
         $file = new GenericFile('https://any-host.example.com/image.jpg');
         // Should not throw HostNotAllowedException
         $path = $cache->get($file, $this->noop);
-        $this->assertNotEmpty($path);
+        $this->assertFileEquals(__DIR__.'/files/test-image.jpg', $path);
     }
 
     /**
@@ -2141,10 +2144,10 @@ class FileStashTest extends TestCase
         $this->app['files']->put($this->getCachedPath('testfile'), 'content');
         $cache->clear();
 
-        $evictionEvents = array_filter($dispatched, fn ($e) => $e instanceof CacheFileEvicted);
-        $this->assertGreaterThanOrEqual(1, count($evictionEvents));
-        $evictionEvent = array_values($evictionEvents)[0];
-        $this->assertEquals('cleared', $evictionEvent->reason);
+        $evictionEvents = array_values(array_filter($dispatched, fn ($e) => $e instanceof CacheFileEvicted));
+        $this->assertCount(1, $evictionEvents);
+        $this->assertSame('cleared', $evictionEvents[0]->reason);
+        $this->assertSame($this->getCachedPath('testfile'), $evictionEvents[0]->path);
     }
 
     // =========================================================================
@@ -2350,16 +2353,17 @@ class FileStashTest extends TestCase
         $this->assertNotEquals($atimeBefore, $atimeAfter);
     }
 
-    public function testGetCachedPathReturnsConsistentResults()
+    public function testEntryIsNamedAfterTheSha256OfTheUrl()
     {
+        // Layout invariant: prune()/clear() only touch names of this shape,
+        // and workers of different processes must agree on it.
         $cache = $this->createCache();
-        $file = new GenericFile('https://example.com/image.jpg');
 
-        $method = new ReflectionMethod($cache, 'getCachedPath');
+        $path = $cache->get(new GenericFile('fixtures://test-file.txt'));
 
-        $path1 = $method->invoke($cache, $file);
-        $path2 = $method->invoke($cache, $file);
-        $this->assertEquals($path1, $path2);
+        $this->assertSame($this->cachePath.'/'.hash('sha256', 'fixtures://test-file.txt'), $path);
+        $this->assertSame($path, $cache->get(new GenericFile('fixtures://test-file.txt')));
+        $this->assertNotSame($path, $cache->get(new GenericFile('fixtures://test-image.jpg')));
     }
 
     // =========================================================================
@@ -2439,10 +2443,10 @@ class FileStashTest extends TestCase
 
         $cache->prune();
 
-        $evictions = array_filter($dispatched, fn ($e) => $e instanceof CacheFileEvicted);
-        $this->assertGreaterThanOrEqual(1, count($evictions));
-        $eviction = array_values($evictions)[0];
-        $this->assertEquals('pruned_age', $eviction->reason);
+        $evictions = array_values(array_filter($dispatched, fn ($e) => $e instanceof CacheFileEvicted));
+        $this->assertCount(1, $evictions);
+        $this->assertSame('pruned_age', $evictions[0]->reason);
+        $this->assertSame($this->getCachedPath('expired'), $evictions[0]->path);
     }
 
     public function testForgetEvictionEventDispatched()

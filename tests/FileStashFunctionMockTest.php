@@ -497,7 +497,6 @@ class FileStashFunctionMockTest extends TestCase
         $this->assertEquals($cachedPath, $resultPath);
         $this->assertFileExists($cachedPath);
         $this->assertGreaterThanOrEqual($maxAttemptsBeforeSuccess, $lockAttempt);
-        $this->assertGreaterThan(0, filesize($cachedPath));
         // Verify the file was read from cache, not re-downloaded
         $this->assertStringEqualsFile($cachedPath, file_get_contents(__DIR__.'/files/test-file.txt'));
 
