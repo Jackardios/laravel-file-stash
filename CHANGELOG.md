@@ -179,6 +179,9 @@ for the full migration guide, including how to switch workers over.
   `CacheFileEvicted` events or bumps the eviction metric.
 - `GenericFile` rejects URLs with an empty scheme or empty path
   (`'://x'`, `'disk://'`) at construction.
+- `getOnce()`/`batchOnce()` no longer throw after the callback succeeded
+  when the cleanup cannot acquire the lifecycle lock in time: a warning is
+  logged, the result is returned, and the entry is left for `prune()`.
 - `cache:clear` / `optimize:clear` no longer fail when the file stash's
   lifecycle lock is busy (a warning is logged instead), and a tag-scoped
   `cache:clear --tags=...` no longer wipes the file stash.

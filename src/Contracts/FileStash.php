@@ -28,7 +28,9 @@ interface FileStash
 
     /**
      * Like `get` but deletes the cached file afterwards (if it is not used somewhere
-     * else).
+     * else). The deletion is best effort: when it cannot happen in time, a
+     * warning is logged, the callback result is still returned, and the file
+     * is left for prune().
      *
      * The cache entry is SHARED between all callers: getOnce() evicts the
      * same entry a concurrent (or future) get() for the same URL would use,
@@ -62,7 +64,7 @@ interface FileStash
 
     /**
      * Like `batch` but deletes the cached files afterwards (if they are not used
-     * somewhere else).
+     * somewhere else). The deletion is best effort, as with getOnce().
      *
      * The cache entries are SHARED between all callers: batchOnce() evicts
      * the same entries a concurrent (or future) get()/batch() for the same

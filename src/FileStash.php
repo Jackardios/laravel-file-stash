@@ -405,7 +405,6 @@ class FileStash implements FileStashContract
 
         $batch = $this->runBatch($files, $callback, $throwOnLock);
 
-        $cleanupException = null;
         $pathsToDelete = array_values(array_unique($batch->paths));
 
         if (! empty($pathsToDelete)) {
@@ -422,25 +421,20 @@ class FileStash implements FileStashContract
                             $this->deleteEntry($path, 'once');
                         }
                     });
-                } catch (\Throwable $exception) {
-                    $cleanupException = $exception;
+                } catch (RuntimeException $exception) {
+                    // The cleanup is best effort: failing the caller after
+                    // its callback already ran would invite a retry of work
+                    // that is done. The entries are left for prune().
+                    $this->logger->warning('Could not delete cached files after batchOnce(); leaving them to prune().', [
+                        'paths_count' => count($pathsToDelete),
+                        'exception' => $exception->getMessage(),
+                    ]);
                 }
             }
         }
 
         if ($batch->exception !== null) {
-            if ($cleanupException !== null) {
-                $this->logger->warning('Failed to clean cached files after batchOnce callback exception.', [
-                    'paths_count' => count($pathsToDelete),
-                    'exception' => $cleanupException->getMessage(),
-                ]);
-            }
-
             throw $batch->exception;
-        }
-
-        if ($cleanupException !== null) {
-            throw $cleanupException;
         }
 
         return $batch->result;

@@ -1264,6 +1264,41 @@ class FileStashTest extends TestCase
         });
     }
 
+    public function testBatchOnceCleanupTimeoutAfterSuccessfulCallbackReturnsResult()
+    {
+        $logger = new RecordingLogger;
+        $cache = new FileStash(
+            ['path' => $this->cachePath, 'lifecycle_lock_timeout' => 0.05],
+            null,
+            null,
+            null,
+            $logger
+        );
+        $file = new GenericFile('fixtures://test-file.txt');
+        $foreignLock = null;
+
+        try {
+            $result = $cache->getOnce($file, function ($file, $path) use (&$foreignLock) {
+                // Another process enters a batch while the callback runs, so
+                // the exclusive lock for the cleanup cannot be acquired.
+                $foreignLock = fopen("{$this->cachePath}/.lifecycle.lock", 'c+');
+                $this->assertTrue(flock($foreignLock, LOCK_SH));
+
+                return file_get_contents($path);
+            });
+        } finally {
+            if (is_resource($foreignLock)) {
+                fclose($foreignLock);
+            }
+        }
+
+        // The work is done: the result is returned and the entry is left
+        // for prune() instead of failing the caller.
+        $this->assertSame(file_get_contents(__DIR__.'/files/test-file.txt'), $result);
+        $this->assertFileExists($this->getCachedPath('fixtures://test-file.txt'));
+        $this->assertCount(1, $logger->messages('warning'));
+    }
+
     public function testBatchOnceThrowOnLock()
     {
         $cache = $this->createCache();

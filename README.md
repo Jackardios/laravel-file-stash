@@ -165,7 +165,7 @@ FileStash::getOnce($invoice, function ($file, $path) {
 // Cached file is automatically removed from disk
 ```
 
-> **Note:** the cache entry is shared by URL across all workers. `getOnce()`/`batchOnce()` delete that shared entry after the callback — if other workers use `get()` on the same URL, you are evicting their warm cache and forcing a re-download. Deletion is skipped for files another worker is actively reading at that moment.
+> **Note:** the cache entry is shared by URL across all workers. `getOnce()`/`batchOnce()` delete that shared entry after the callback — if other workers use `get()` on the same URL, you are evicting their warm cache and forcing a re-download. Deletion is best effort: it is skipped for files another worker is actively reading at that moment, and if the exclusive lifecycle lock cannot be acquired within `lifecycle_lock_timeout` a warning is logged — the callback result is still returned and the entry is left for `prune()`.
 
 ---
 
