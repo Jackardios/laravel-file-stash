@@ -36,6 +36,7 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use RuntimeException;
 use Symfony\Component\Finder\Finder;
+use Symfony\Component\Finder\SplFileInfo;
 
 /**
  * The file cache.
@@ -54,6 +55,11 @@ class FileStash implements FileStashContract
      * it.
      */
     protected const TEMP_GRACE_SECONDS = 60;
+
+    /**
+     * Basename pattern of cache entries ({sha256}).
+     */
+    protected const ENTRY_FILE_PATTERN = '/^[0-9a-f]{64}$/';
 
     /**
      * Basename pattern of write-in-progress temp files ({sha256}.{pid}.{16hex}.tmp).
@@ -473,14 +479,8 @@ class FileStash implements FileStashContract
 
             $fileInfos = [];
             $tempFiles = [];
-            $files = Finder::create()
-                ->files()
-                ->ignoreDotFiles(true)
-                ->exclude('.locks')
-                ->in($this->config['path'])
-                ->getIterator();
 
-            foreach ($files as $file) {
+            foreach ($this->findCacheFiles() as $file) {
                 if ($this->isPruneTimedOut($startTime, $timeout, 'file collection')) {
                     $stats['completed'] = false;
                     break;
@@ -665,21 +665,39 @@ class FileStash implements FileStashContract
                 return;
             }
 
-            $files = Finder::create()
-                ->files()
-                ->ignoreDotFiles(true)
-                ->exclude('.locks')
-                ->in($this->config['path'])
-                ->getIterator();
-
-            foreach ($files as $file) {
-                $this->deleteEntry($file->getPathname(), 'cleared');
+            foreach ($this->findCacheFiles() as $file) {
+                // With the exclusive lifecycle lock held there are no active
+                // downloads: temp files are orphans of crashed writers (no
+                // eviction events for them), and all claim files are idle.
+                if (preg_match(self::TEMP_FILE_PATTERN, $file->getBasename()) === 1) {
+                    $this->unlinkLocked($file->getPathname());
+                } else {
+                    $this->deleteEntry($file->getPathname(), 'cleared');
+                }
             }
 
-            // With the exclusive lifecycle lock held there are no active
-            // downloads, so all remaining claim files are idle.
             $this->pruneClaimFiles(time(), -1);
         });
+    }
+
+    /**
+     * Cache entries and temp files directly inside the cache directory.
+     *
+     * Anything else — dot-files (locks), subdirectories, files with foreign
+     * names — is not ours: prune()/clear() never touch it, even when the
+     * cache path points at a directory shared with other data.
+     *
+     * @return iterable<SplFileInfo>
+     */
+    protected function findCacheFiles(): iterable
+    {
+        return Finder::create()
+            ->files()
+            ->depth(0)
+            ->ignoreDotFiles(true)
+            ->name(self::ENTRY_FILE_PATTERN)
+            ->name(self::TEMP_FILE_PATTERN)
+            ->in($this->config['path']);
     }
 
     /**

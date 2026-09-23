@@ -422,48 +422,108 @@ class FileStashTest extends TestCase
 
     public function testPrune()
     {
-        $this->app['files']->put("{$this->cachePath}/abc", 'abc');
-        touch("{$this->cachePath}/abc", time() - 1);
-        $this->app['files']->put("{$this->cachePath}/def", 'def');
+        $this->app['files']->put($this->getCachedPath('abc'), 'abc');
+        touch($this->getCachedPath('abc'), time() - 1);
+        $this->app['files']->put($this->getCachedPath('def'), 'def');
 
         $cache = $this->createCache(['max_size' => 3]);
         $cache->prune();
 
-        $this->assertFileDoesNotExist("{$this->cachePath}/abc");
-        $this->assertFileExists("{$this->cachePath}/def");
+        $this->assertFileDoesNotExist($this->getCachedPath('abc'));
+        $this->assertFileExists($this->getCachedPath('def'));
 
         $cache = $this->createCache(['max_size' => 0]);
         $cache->prune();
 
-        $this->assertFileDoesNotExist("{$this->cachePath}/def");
+        $this->assertFileDoesNotExist($this->getCachedPath('def'));
     }
 
     public function testPruneAge()
     {
-        $this->app['files']->put("{$this->cachePath}/abc", 'abc');
-        touch("{$this->cachePath}/abc", time() - 61);
-        $this->app['files']->put("{$this->cachePath}/def", 'def');
+        $this->app['files']->put($this->getCachedPath('abc'), 'abc');
+        touch($this->getCachedPath('abc'), time() - 61);
+        $this->app['files']->put($this->getCachedPath('def'), 'def');
 
         $cache = $this->createCache(['max_age' => 1]);
         $cache->prune();
 
-        $this->assertFileDoesNotExist("{$this->cachePath}/abc");
-        $this->assertFileExists("{$this->cachePath}/def");
+        $this->assertFileDoesNotExist($this->getCachedPath('abc'));
+        $this->assertFileExists($this->getCachedPath('def'));
+    }
+
+    public function testPruneAndClearOnlyTouchCacheEntries()
+    {
+        $hash = hash('sha256', 'https://example.com/foreign');
+        $foreign = [
+            "{$this->cachePath}/README.txt",
+            "{$this->cachePath}/{$hash}.bak",
+            "{$this->cachePath}/sub/deeper/user-upload.jpg",
+            "{$this->cachePath}/sub/{$hash}",
+            "{$this->cachePath}/sub/{$hash}.1.0123456789abcdef.tmp",
+        ];
+        foreach ($foreign as $path) {
+            $this->app['files']->makeDirectory(dirname($path), 0755, true, true);
+            $this->app['files']->put($path, 'not a cache entry');
+            touch($path, time() - 7200);
+        }
+
+        $entry = $this->getCachedPath('https://example.com/entry');
+        $this->app['files']->put($entry, 'entry');
+        touch($entry, time() - 7200);
+
+        $cache = $this->createCache(['max_age' => 1, 'max_size' => 0]);
+        $stats = $cache->prune();
+
+        $this->assertFileDoesNotExist($entry);
+        $this->assertSame(1, $stats['deleted']);
+        $this->assertSame(0, $stats['remaining']);
+
+        $this->app['files']->put($entry, 'entry');
+        $cache->clear();
+
+        $this->assertFileDoesNotExist($entry);
+        foreach ($foreign as $path) {
+            $this->assertFileExists($path);
+        }
+    }
+
+    public function testClearRemovesOrphanedTempFilesWithoutEvictionEvents()
+    {
+        $dispatched = [];
+        $dispatcher = $this->createStub(Dispatcher::class);
+        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
+            $dispatched[] = $event;
+        });
+        $cache = new FileStash(['path' => $this->cachePath, 'events_enabled' => true], null, null, null, null, $dispatcher);
+
+        $entry = $this->getCachedPath('https://example.com/entry');
+        $temp = "{$entry}.123.0123456789abcdef.tmp";
+        $this->app['files']->put($entry, 'entry');
+        $this->app['files']->put($temp, 'partial');
+
+        $cache->clear();
+
+        $this->assertFileDoesNotExist($entry);
+        $this->assertFileDoesNotExist($temp);
+        $this->assertSame(1, $cache->metrics()->evictions);
+        $evicted = array_values(array_filter($dispatched, fn ($e) => $e instanceof CacheFileEvicted));
+        $this->assertCount(1, $evicted);
+        $this->assertSame($entry, $evicted[0]->path);
     }
 
     public function testClear()
     {
-        $this->app['files']->put("{$this->cachePath}/abc", 'abc');
-        $this->app['files']->put("{$this->cachePath}/def", 'abc');
+        $this->app['files']->put($this->getCachedPath('abc'), 'abc');
+        $this->app['files']->put($this->getCachedPath('def'), 'abc');
 
-        $handle = fopen("{$this->cachePath}/def", 'rb');
+        $handle = fopen($this->getCachedPath('def'), 'rb');
         flock($handle, LOCK_SH);
 
         try {
             $this->createCache()->clear();
 
-            $this->assertFileExists("{$this->cachePath}/def");
-            $this->assertFileDoesNotExist("{$this->cachePath}/abc");
+            $this->assertFileExists($this->getCachedPath('def'));
+            $this->assertFileDoesNotExist($this->getCachedPath('abc'));
         } finally {
             if (is_resource($handle)) {
                 flock($handle, LOCK_UN);
@@ -688,8 +748,8 @@ class FileStashTest extends TestCase
 
     public function testPruneSkipsLockedFile()
     {
-        $unlockedFile = "{$this->cachePath}/unlocked";
-        $lockedFile = "{$this->cachePath}/locked";
+        $unlockedFile = $this->getCachedPath('unlocked');
+        $lockedFile = $this->getCachedPath('locked');
 
         $this->app['files']->put($unlockedFile, 'delete me');
         touch($unlockedFile, time() - 100);
@@ -1486,10 +1546,10 @@ class FileStashTest extends TestCase
     public function testPruneBySizeDeletesOldestFiles()
     {
         // Create files with different access times
-        $this->app['files']->put("{$this->cachePath}/old", str_repeat('a', 100));
-        touch("{$this->cachePath}/old", time() - 10, time() - 10);
+        $this->app['files']->put($this->getCachedPath('old'), str_repeat('a', 100));
+        touch($this->getCachedPath('old'), time() - 10, time() - 10);
 
-        $this->app['files']->put("{$this->cachePath}/new", str_repeat('b', 100));
+        $this->app['files']->put($this->getCachedPath('new'), str_repeat('b', 100));
         // new file has current atime
 
         clearstatcache();
@@ -1503,8 +1563,8 @@ class FileStashTest extends TestCase
         $cache->prune();
 
         // Old file should be deleted, new file should remain
-        $this->assertFileDoesNotExist("{$this->cachePath}/old");
-        $this->assertFileExists("{$this->cachePath}/new");
+        $this->assertFileDoesNotExist($this->getCachedPath('old'));
+        $this->assertFileExists($this->getCachedPath('new'));
     }
 
     // =========================================================================
@@ -1522,8 +1582,8 @@ class FileStashTest extends TestCase
     {
         // Create many expired files so prune has work to do
         for ($i = 0; $i < 5; $i++) {
-            $this->app['files']->put("{$this->cachePath}/file{$i}", str_repeat('x', 100));
-            touch("{$this->cachePath}/file{$i}", time() - 7200); // 2 hours old
+            $this->app['files']->put($this->getCachedPath("file{$i}"), str_repeat('x', 100));
+            touch($this->getCachedPath("file{$i}"), time() - 7200); // 2 hours old
         }
 
         // Use a subclass that forces isPruneTimedOut to return true after first file
@@ -1710,7 +1770,7 @@ class FileStashTest extends TestCase
         );
 
         // Add a file to cache, then clear
-        $this->app['files']->put("{$this->cachePath}/testfile", 'content');
+        $this->app['files']->put($this->getCachedPath('testfile'), 'content');
         $cache->clear();
 
         $evictionEvents = array_filter($dispatched, fn ($e) => $e instanceof CacheFileEvicted);
@@ -1997,8 +2057,8 @@ class FileStashTest extends TestCase
         });
 
         // Create an expired file
-        $this->app['files']->put("{$this->cachePath}/expired", 'content');
-        touch("{$this->cachePath}/expired", time() - 7200);
+        $this->app['files']->put($this->getCachedPath('expired'), 'content');
+        touch($this->getCachedPath('expired'), time() - 7200);
 
         $cache = new FileStash(
             ['path' => $this->cachePath, 'max_age' => 1, 'events_enabled' => true],

@@ -179,6 +179,10 @@ for the full migration guide, including how to switch workers over.
   `CacheFileEvicted` events or bumps the eviction metric.
 - `GenericFile` rejects URLs with an empty scheme or empty path
   (`'://x'`, `'disk://'`) at construction.
+- `prune()`/`clear()` only touch files the cache created (entries and temp
+  files directly inside the cache directory); they used to delete every
+  file in the directory tree, including foreign files and subdirectories.
+  `clear()` no longer reports orphaned temp files as evicted entries.
 - `getOnce()`/`batchOnce()` no longer throw after the callback succeeded
   when the cleanup cannot acquire the lifecycle lock in time: a warning is
   logged, the result is returned, and the entry is left for `prune()`.

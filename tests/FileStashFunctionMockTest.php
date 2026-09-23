@@ -624,8 +624,8 @@ class FileStashFunctionMockTest extends TestCase
     {
         // Create several files that should be pruned by age
         for ($i = 0; $i < 5; $i++) {
-            $this->files->put("{$this->cachePath}/file_{$i}", str_repeat('x', 100));
-            touch("{$this->cachePath}/file_{$i}", time() - 120); // 2 minutes old
+            $this->files->put($this->getCachedPath("file_{$i}"), str_repeat('x', 100));
+            touch($this->getCachedPath("file_{$i}"), time() - 120); // 2 minutes old
         }
 
         // Mock time() to simulate timeout after a few iterations
@@ -657,7 +657,7 @@ class FileStashFunctionMockTest extends TestCase
         $this->assertFalse($stats['completed']);
 
         // Some files should still exist due to timeout
-        $remainingFiles = glob("{$this->cachePath}/file_*");
+        $remainingFiles = array_filter(range(0, 4), fn (int $i): bool => file_exists($this->getCachedPath("file_{$i}")));
         $this->assertNotEmpty($remainingFiles, 'Some files should remain after prune timeout');
     }
 

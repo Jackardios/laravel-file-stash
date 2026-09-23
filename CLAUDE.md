@@ -44,7 +44,7 @@ composer analyse
 
 ### Write protocol (v5) — the core invariants
 
-Cache layout inside `config['path']`: entry = `{sha256(url)}`; temp = `{sha256}.{pid}.{16hex}.tmp`; claim = `.locks/{sha256}.lock`; lifecycle lock = `.lifecycle.lock`. Dot-files are invisible to Symfony Finder (prune/clear never see them); temp files ARE visible and garbage-collected by prune after a 60 s grace (`TEMP_GRACE_SECONDS`).
+Cache layout inside `config['path']`: entry = `{sha256(url)}`; temp = `{sha256}.{pid}.{16hex}.tmp`; claim = `.locks/{sha256}.lock`; lifecycle lock = `.lifecycle.lock`. prune/clear only look at depth-0 files named like an entry or a temp file (`findCacheFiles()`); anything else in the directory is never touched. Temp files are garbage-collected by prune after a 60 s grace (`TEMP_GRACE_SECONDS`) and by clear (no eviction events for them).
 
 1. **Read path** (`tryReadExisting`): `fopen('rb')` → `LOCK_SH` → `fstat`: `nlink == 0` → retry (entry was deleted/re-published); zero-byte entries are valid and served. Hot reads never touch the claim.
 2. **Write path** (`claimAndCreate` → `downloadAndPublish`): claim `LOCK_EX` (dedupes concurrent downloads; after acquiring, recheck `nlink == 0` against claim GC) → re-check `tryReadExisting` (winner may have published while we waited) → stream into temp file held under `LOCK_EX` its whole lifetime (flock returns checked; EX failure → fresh temp retry) → `fsync` (power-loss safety; page cache is per-inode, covers the fetcher's own fd) → MIME check → atomic `rename(temp, entry)` → convert EX→SH **on the same fd** (follows the inode) → recheck `nlink` (the EX→SH conversion is not atomic on Linux; on loss, re-download under the same claim, max 2 attempts).
