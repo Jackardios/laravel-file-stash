@@ -43,7 +43,6 @@ class ConfigNormalizerTest extends TestCase
         $this->assertSame(0, $config['http_retries']);
         $this->assertSame(100, $config['http_retry_delay']);
         $this->assertSame(30.0, $config['lifecycle_lock_timeout']);
-        $this->assertTrue($config['legacy_lifecycle_lock']);
         $this->assertSame(100, $config['batch_chunk_size']);
         $this->assertSame(self::PATH, $config['path']);
         $this->assertSame(5, $config['max_redirects']);
@@ -172,7 +171,6 @@ class ConfigNormalizerTest extends TestCase
             // booleans
             'events_enabled string' => ['events_enabled', 'not-a-bool'],
             'block_private_hosts string' => ['block_private_hosts', 'maybe'],
-            'legacy_lifecycle_lock array' => ['legacy_lifecycle_lock', []],
             // allowed_hosts
             'allowed_hosts integer' => ['allowed_hosts', 42],
             'allowed_hosts non-string entry' => ['allowed_hosts', [123]],
@@ -202,7 +200,6 @@ class ConfigNormalizerTest extends TestCase
         $this->assertTrue($this->normalize(['events_enabled' => 'true'])['events_enabled']);
         $this->assertFalse($this->normalize(['events_enabled' => 'false'])['events_enabled']);
         $this->assertTrue($this->normalize(['block_private_hosts' => '1'])['block_private_hosts']);
-        $this->assertFalse($this->normalize(['legacy_lifecycle_lock' => '0'])['legacy_lifecycle_lock']);
     }
 
     // -------------------------------------------------------------------------

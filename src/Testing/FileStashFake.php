@@ -70,7 +70,7 @@ class FileStashFake extends FileStash
         $files->cleanDirectory($path);
 
         parent::__construct(
-            ['path' => $path, 'events_enabled' => false, 'legacy_lifecycle_lock' => false],
+            ['path' => $path, 'events_enabled' => false],
             null,
             $files
         );

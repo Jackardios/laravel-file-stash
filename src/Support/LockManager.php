@@ -93,9 +93,6 @@ final class LockManager
      * @template T
      *
      * @param  string  $lockPath  Lock file inside the cache directory.
-     * @param  string|null  $legacyLockPath  Additional lock (always acquired
-     *                                       first) for coexistence with workers using the old v4 lock
-     *                                       location during rolling deploys.
      * @param  int<0, 3>  $lockType  LOCK_SH or LOCK_EX
      * @param  float  $timeout  Seconds to wait. Negative = wait indefinitely.
      * @param  callable(): T  $callback
@@ -103,10 +100,10 @@ final class LockManager
      *
      * @throws LifecycleLockTimeoutException When the lock cannot be acquired in time.
      * @throws LogicException On a nested EX request under a held SH.
+     * @throws RuntimeException When the lock file cannot be opened.
      */
     public static function withLifecycleLock(
         string $lockPath,
-        ?string $legacyLockPath,
         int $lockType,
         float $timeout,
         callable $callback
@@ -124,7 +121,15 @@ final class LockManager
             return $callback();
         }
 
-        $streams = self::acquireLifecycleStreams($lockPath, $legacyLockPath, $lockType, $timeout);
+        $stream = self::openLockStream($lockPath);
+
+        if (! self::flockWithTimeout($stream, $lockType, $timeout)) {
+            fclose($stream);
+            throw LifecycleLockTimeoutException::create(
+                "Failed to acquire file cache lifecycle lock within {$timeout} seconds."
+            );
+        }
+
         self::$lifecycleRegistry[$lockPath] = $lockType;
 
         try {
@@ -132,10 +137,8 @@ final class LockManager
         } finally {
             unset(self::$lifecycleRegistry[$lockPath]);
 
-            foreach (array_reverse($streams) as $stream) {
-                flock($stream, LOCK_UN);
-                fclose($stream);
-            }
+            flock($stream, LOCK_UN);
+            fclose($stream);
 
             // Hooks run AFTER the flocks are gone, so a hook may take a real
             // exclusive lifecycle lock (e.g. to flush deferred deletions).
@@ -190,54 +193,6 @@ final class LockManager
                 // Hook owners handle/log their own errors.
             }
         }
-    }
-
-    /**
-     * Acquire the lifecycle lock stream(s), legacy lock first.
-     *
-     * The shared deadline spans both acquisitions, so the configured timeout
-     * bounds the whole operation.
-     *
-     * @param  int<0, 3>  $lockType
-     * @return array<int, resource> Streams in acquisition order.
-     *
-     * @throws LifecycleLockTimeoutException
-     * @throws RuntimeException
-     */
-    private static function acquireLifecycleStreams(
-        string $lockPath,
-        ?string $legacyLockPath,
-        int $lockType,
-        float $timeout
-    ): array {
-        $deadline = $timeout >= 0 ? microtime(true) + $timeout : null;
-        $paths = $legacyLockPath !== null ? [$legacyLockPath, $lockPath] : [$lockPath];
-        $streams = [];
-
-        try {
-            foreach ($paths as $path) {
-                $stream = self::openLockStream($path);
-                $remaining = $deadline !== null ? max(0.0, $deadline - microtime(true)) : -1.0;
-
-                if (! self::flockWithTimeout($stream, $lockType, $remaining)) {
-                    fclose($stream);
-                    throw LifecycleLockTimeoutException::create(
-                        "Failed to acquire file cache lifecycle lock within {$timeout} seconds."
-                    );
-                }
-
-                $streams[] = $stream;
-            }
-        } catch (Throwable $exception) {
-            foreach (array_reverse($streams) as $stream) {
-                flock($stream, LOCK_UN);
-                fclose($stream);
-            }
-
-            throw $exception;
-        }
-
-        return $streams;
     }
 
     /**

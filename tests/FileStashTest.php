@@ -31,7 +31,6 @@ use Jackardios\FileStash\Exceptions\MimeTypeIsNotAllowedException;
 use Jackardios\FileStash\FileStash;
 use Jackardios\FileStash\GenericFile;
 use Jackardios\FileStash\Support\CacheMetrics;
-use Jackardios\FileStash\Support\DeleteResult;
 use Jackardios\FileStash\Testing\FileStashFake;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -291,28 +290,11 @@ class FileStashTest extends TestCase
         }
     }
 
-    public function testGetIgnoreZeroSize()
-    {
-        // Zero-length entries are treated as v4 artifacts only while the
-        // legacy lifecycle lock (v4/v5 coexistence) is enabled.
-        $cache = $this->createCache(['legacy_lifecycle_lock' => true]);
-        $url = 'fixtures://test-file.txt';
-        $file = new GenericFile($url);
-        $cachedPath = $this->getCachedPath($url);
-
-        touch($cachedPath);
-        $this->assertEquals(0, filesize($cachedPath));
-
-        $cache->get($file, fn ($file, $path) => $file);
-
-        $this->assertNotEquals(0, filesize($cachedPath));
-    }
-
-    public function testZeroByteEntryIsServedWhenLegacyLockDisabled()
+    public function testZeroByteEntryIsServed()
     {
         // The empty mock queue proves no refetch happens: any request would
         // throw on queue exhaustion.
-        $cache = $this->createCacheWithMockClient([], ['legacy_lifecycle_lock' => false]);
+        $cache = $this->createCacheWithMockClient([]);
         $url = 'https://files/empty.bin';
         $cachedPath = $this->getCachedPath($url);
 
@@ -324,11 +306,11 @@ class FileStashTest extends TestCase
         $this->assertSame(0, filesize($cachedPath));
     }
 
-    public function testEmptyRemoteBodyIsCachedWhenLegacyLockDisabled()
+    public function testEmptyRemoteBodyIsCached()
     {
         $cache = $this->createCacheWithMockClient([
             new Response(200, [], ''),
-        ], ['legacy_lifecycle_lock' => false]);
+        ]);
         $url = 'https://files/empty.bin';
         $file = new GenericFile($url);
 
@@ -347,7 +329,7 @@ class FileStashTest extends TestCase
         // whitelist (it reports an artificial empty-file type).
         $cache = $this->createCacheWithMockClient([
             new Response(200, [], ''),
-        ], ['legacy_lifecycle_lock' => false, 'mime_types' => ['image/jpeg']]);
+        ], ['mime_types' => ['image/jpeg']]);
 
         $this->expectException(MimeTypeIsNotAllowedException::class);
         $cache->get(new GenericFile('https://files/empty.bin'), $this->noop);
@@ -1141,17 +1123,18 @@ class FileStashTest extends TestCase
         ]);
     }
 
-    public function testLifecycleLockPathUsesNormalizedCachePath()
+    public function testLifecycleLockLivesOnlyInTheCacheDirectory()
     {
-        $cacheWithPlainPath = new FileStash(['path' => $this->cachePath]);
-        $cacheWithTrailingSlash = new FileStash(['path' => $this->cachePath.'/']);
+        $tempLocks = sys_get_temp_dir().'/laravel-file-stash/locks';
+        $before = glob("{$tempLocks}/*") ?: [];
 
-        $method = new ReflectionMethod(FileStash::class, 'getLifecycleLockPath');
+        // A trailing slash must address the same lock file.
+        $cache = new FileStash(['path' => $this->cachePath.'/']);
+        $cache->batch([new GenericFile('fixtures://test-file.txt')]);
+        $cache->clear();
 
-        $this->assertSame(
-            $method->invoke($cacheWithPlainPath),
-            $method->invoke($cacheWithTrailingSlash)
-        );
+        $this->assertFileExists("{$this->cachePath}/.lifecycle.lock");
+        $this->assertSame($before, glob("{$tempLocks}/*") ?: []);
     }
 
     public function testGetRemoteWithAllowedHostsValidation()
@@ -2734,65 +2717,10 @@ class FileStashTest extends TestCase
         $this->assertDirectoryDoesNotExist($nonExistentPath);
     }
 
-    public function testZeroSizePurgeSkippedUnderForeignSharedLockRedownloadsSafely()
-    {
-        $cache = $this->createCache(['legacy_lifecycle_lock' => true]);
-        $url = 'fixtures://test-file.txt';
-        $cachedPath = $this->getCachedPath($url);
-
-        touch($cachedPath);
-        $reader = fopen($cachedPath, 'rb');
-        $this->assertTrue(flock($reader, LOCK_SH));
-
-        try {
-            $path = $cache->get(new GenericFile($url), $this->noop);
-
-            // The zero-byte purge was skipped (the reader holds a shared
-            // lock); fresh content was atomically renamed over the path
-            // instead, leaving the reader's inode untouched.
-            $this->assertSame($cachedPath, $path);
-            $this->assertSame(0, fstat($reader)['size']);
-            $this->assertGreaterThan(0, filesize($cachedPath));
-        } finally {
-            flock($reader, LOCK_UN);
-            fclose($reader);
-        }
-    }
-
-    public function testDeleteEntryWithStreamSkipsWhenPathWasRepublished()
-    {
-        $cache = $this->createCache();
-        $path = "{$this->cachePath}/entry";
-        touch($path);
-
-        // A reader opened the zero-byte inode before it was replaced.
-        $stream = fopen($path, 'rb');
-        $this->assertTrue(flock($stream, LOCK_SH));
-
-        // Concurrent republish: a fresh file replaces the path (new inode).
-        file_put_contents("{$path}.new", 'fresh content');
-        rename("{$path}.new", $path);
-
-        // The in-place upgrade must not delete the republished file: the
-        // locked inode no longer matches the path (and fails the verify).
-        $method = new ReflectionMethod($cache, 'deleteEntry');
-        $result = $method->invoke(
-            $cache,
-            $path,
-            'zero_size',
-            $stream,
-            static fn (array $s): bool => $s['size'] === 0 && ($s['nlink'] ?? 0) > 0
-        );
-
-        $this->assertSame(DeleteResult::Skipped, $result);
-        $this->assertSame('fresh content', file_get_contents($path));
-    }
-
     public function testForgetReturnsFalseOnLifecycleLockTimeout()
     {
         $cache = $this->createCache([
             'lifecycle_lock_timeout' => 0.05,
-            'legacy_lifecycle_lock' => false,
         ]);
         $file = new GenericFile('fixtures://test-file.txt');
         $path = $cache->get($file, $this->noop);
@@ -2814,7 +2742,6 @@ class FileStashTest extends TestCase
     {
         $cache = $this->createCache([
             'lifecycle_lock_timeout' => 0.05,
-            'legacy_lifecycle_lock' => false,
         ]);
         $file = new GenericFile('fixtures://test-file.txt');
         $cache->get($file, $this->noop);

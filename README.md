@@ -490,7 +490,6 @@ IPv6 literals — in URLs and in `allowed_hosts` — are canonicalized before co
 | `lock_wait_timeout` | `FILE_STASH_LOCK_WAIT_TIMEOUT` | `-1` (forever) | Lock wait timeout (seconds) |
 | `lifecycle_lock_timeout` | `FILE_STASH_LIFECYCLE_LOCK_TIMEOUT` | `30` | Batch/clear coordination timeout |
 | `batch_chunk_size` | `FILE_STASH_BATCH_CHUNK_SIZE` | `100` | Files per chunk (prevents fd exhaustion; `-1` = no chunking) |
-| `legacy_lifecycle_lock` | `FILE_STASH_LEGACY_LIFECYCLE_LOCK` | `true` | v4 coexistence: also take the v4-style lock in the system temp dir and purge zero-length entries as v4 artifacts (see Upgrading) |
 
 ### Pruning
 
@@ -621,15 +620,12 @@ v5 is a major rewrite of the write protocol. For Laravel 10 / PHP 8.1 stay on v4
 
 Standalone (non-Laravel) construction now requires an explicit absolute `path` in the config array, and `disk://` URLs require passing a `FilesystemManager` to the constructor.
 
-### Rolling deploys
+### Switching workers over
 
-v4 and v5 workers can run side by side against the same cache directory during a rolling deploy:
+v4 and v5 use different lock protocols and **must not** work on the same cache directory at the same time (a v5 reader could serve a file that a v4 writer has only just created, and v4 `clear()`/`prune()` would not see v5's locks). Either:
 
-- v5 entries are only ever published complete (atomic rename), so v4 readers are safe.
-- v5 keeps taking the v4-style lifecycle lock in the system temp dir while `legacy_lifecycle_lock` is `true` (the default), so v4 `clear()`/`batch()` still coordinate with v5 workers.
-- Zero-length entries left by the v4 protocol are detected and re-downloaded by v5 (this purge is active only while `legacy_lifecycle_lock` is `true`; with it disabled, zero-byte entries are valid cache content).
-
-Once **all** workers run v5, set `legacy_lifecycle_lock => false` (the option will be removed in v6).
+- stop all v4 workers, delete the cache directory (v4 may have left zero-length files behind, which v5 serves as valid empty entries), then start the v5 workers; or
+- point v5 at a new `path` and delete the old directory once the last v4 worker is gone.
 
 ---
 

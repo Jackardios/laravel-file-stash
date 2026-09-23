@@ -32,7 +32,6 @@ use Jackardios\FileStash\Exceptions\InvalidConfigurationException;
  *   http_retries: int,
  *   http_retry_delay: int,
  *   lifecycle_lock_timeout: float,
- *   legacy_lifecycle_lock: bool,
  *   batch_chunk_size: int,
  *   path: string,
  *   user_agent: string,
@@ -59,7 +58,6 @@ final class ConfigNormalizer
         'http_retries' => 0, // no retries by default
         'http_retry_delay' => 100, // 100ms base delay for retries (exponential backoff)
         'lifecycle_lock_timeout' => 30.0, // 30 seconds (-1 = indefinitely)
-        'legacy_lifecycle_lock' => true, // also take the v4-style lock in the temp dir; remove in v6
         'batch_chunk_size' => 100, // chunk size for batch operations
         'user_agent' => 'Laravel-FileStash/5.x',
         'max_redirects' => 5,
@@ -93,7 +91,6 @@ final class ConfigNormalizer
             'http_retries' => self::toInt($merged['http_retries'], 'http_retries'),
             'http_retry_delay' => self::toInt($merged['http_retry_delay'], 'http_retry_delay'),
             'lifecycle_lock_timeout' => self::toFloat($merged['lifecycle_lock_timeout'], 'lifecycle_lock_timeout'),
-            'legacy_lifecycle_lock' => self::toBool($merged['legacy_lifecycle_lock'], 'legacy_lifecycle_lock'),
             'batch_chunk_size' => self::toInt($merged['batch_chunk_size'], 'batch_chunk_size'),
             'user_agent' => self::toUserAgent($merged['user_agent']),
             'max_redirects' => self::toInt($merged['max_redirects'], 'max_redirects'),

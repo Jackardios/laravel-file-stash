@@ -145,18 +145,6 @@ return [
     'lifecycle_lock_timeout' => env('FILE_STASH_LIFECYCLE_LOCK_TIMEOUT', 30.0),
 
     /*
-     | v4 coexistence mode: acquire the v4-style lifecycle lock in the
-     | system temp directory in addition to the in-cache lock, and treat
-     | zero-length cache entries as v4 artifacts (purge + re-download), so
-     | workers running file-stash v4 and v5 side by side (e.g. during a
-     | rolling deploy) still coordinate correctly. Disable once all workers
-     | run v5 — zero-byte entries then become valid cache content. This
-     | option will be removed in v6.
-     | Default: true
-     */
-    'legacy_lifecycle_lock' => env('FILE_STASH_LEGACY_LIFECYCLE_LOCK', true),
-
-    /*
      | Maximum number of files to process in a single chunk during
      | batch() and batchOnce() to avoid file descriptor exhaustion.
      | Set to -1 for no limit.

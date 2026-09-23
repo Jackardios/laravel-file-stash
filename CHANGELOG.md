@@ -6,7 +6,7 @@ All notable changes to this package are documented in this file.
 
 Major rewrite of the concurrency core. For Laravel 10 / PHP 8.1 stay on v4.x.
 See the [Upgrading v4 → v5](README.md#upgrading-v4--v5) section of the README
-for the full migration guide, including rolling-deploy instructions.
+for the full migration guide, including how to switch workers over.
 
 ### Breaking: requirements
 
@@ -30,17 +30,14 @@ for the full migration guide, including rolling-deploy instructions.
   transient `*.tmp` files. `prune()` garbage-collects orphaned temp files
   (after a 60 s grace period) and idle claim files; `clear()` removes them.
 - The lifecycle lock moved from the system temp directory into the cache
-  directory. During rolling deploys `legacy_lifecycle_lock` (default `true`)
-  keeps taking the v4-style lock as well, so mixed v4/v5 workers still
-  coordinate. Disable it once all workers run v5; it will be removed in v6.
+  directory. v4 and v5 workers must not share a cache directory: stop the
+  v4 workers and delete the directory (or use a new `path`) before
+  starting v5 workers.
 - The downloaded payload is `fsync()`ed before the publishing `rename()`,
   so a power loss cannot leave a zero-length or truncated file under the
   published name.
-- Zero-length entries are treated as v4 artifacts (deleted and
-  re-downloaded) only while `legacy_lifecycle_lock` is `true`. With the
-  legacy lock disabled, zero-byte entries are valid and served as-is —
-  except under a MIME whitelist, which always rejects empty files
-  (deny-by-default).
+- Zero-byte entries are valid and served as-is — except under a MIME
+  whitelist, which always rejects empty files (deny-by-default).
 - If a writer crashes mid-download, the kernel releases its locks and the
   next worker takes over; no manual intervention needed.
 - Crashed writers' temp files are cleaned up by `prune()`; deletions verify
@@ -78,8 +75,7 @@ for the full migration guide, including rolling-deploy instructions.
 - `timeout` default changed from `-1` (unlimited) to `300` seconds.
 - `user_agent` default changed to `Laravel-FileStash/5.x`.
 - `prune_interval => null` disables the scheduled prune.
-- New options: `block_private_hosts` (SSRF hardening, default `false`) and
-  `legacy_lifecycle_lock` (rolling-deploy compatibility, default `true`).
+- New option: `block_private_hosts` (SSRF hardening, default `false`).
 - `block_private_hosts` blocks the full set of special-purpose IPv4/IPv6
   ranges (explicit CIDR lists, not PHP's `filter_var` flags): CGNAT
   `100.64/10` (cloud metadata at `100.100.100.200`), benchmarking
@@ -172,8 +168,6 @@ for the full migration guide, including rolling-deploy instructions.
 - `flock()` return values on the temp file (initial `LOCK_EX` and the
   EX→SH conversion) are checked; a lost conversion re-downloads under the
   same claim instead of returning an unprotected stream.
-- The zero-length purge upgrades the reader's shared lock in place, so a
-  concurrently republished entry can no longer be deleted by mistake.
 - Claim-lock retries (after a garbage-collected claim file) share one
   `lock_wait_timeout` budget instead of multiplying it by five.
 - `FileLockedException` under `throwOnLock` no longer increments the errors

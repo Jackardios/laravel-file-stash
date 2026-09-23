@@ -28,11 +28,11 @@ class LockManagerTest extends TestCase
     {
         $this->assertNull(LockManager::heldLifecycleType($this->lockPath));
 
-        LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, function () {
+        LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, function () {
             $this->assertSame(LOCK_SH, LockManager::heldLifecycleType($this->lockPath));
         });
 
-        LockManager::withLifecycleLock($this->lockPath, null, LOCK_EX, 1.0, function () {
+        LockManager::withLifecycleLock($this->lockPath, LOCK_EX, 1.0, function () {
             $this->assertSame(LOCK_EX, LockManager::heldLifecycleType($this->lockPath));
         });
 
@@ -43,8 +43,8 @@ class LockManagerTest extends TestCase
     {
         $this->expectException(LogicException::class);
 
-        LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, function () {
-            LockManager::withLifecycleLock($this->lockPath, null, LOCK_EX, 1.0, fn () => null);
+        LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, function () {
+            LockManager::withLifecycleLock($this->lockPath, LOCK_EX, 1.0, fn () => null);
         });
     }
 
@@ -57,7 +57,7 @@ class LockManagerTest extends TestCase
             $this->expectException(LifecycleLockTimeoutException::class);
             $this->expectExceptionMessage('lifecycle lock');
 
-            LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 0.0, fn () => null);
+            LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 0.0, fn () => null);
         } finally {
             flock($foreign, LOCK_UN);
             fclose($foreign);
@@ -68,8 +68,8 @@ class LockManagerTest extends TestCase
     {
         $calls = [];
 
-        LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, function () use (&$calls) {
-            LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, function () use (&$calls) {
+        LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, function () use (&$calls) {
+            LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, function () use (&$calls) {
                 LockManager::onOutermostRelease($this->lockPath, 1, function () use (&$calls) {
                     $calls[] = 'hook';
                 });
@@ -82,7 +82,7 @@ class LockManagerTest extends TestCase
         $this->assertSame(['hook'], $calls);
 
         // A later lifecycle section must not re-run the drained hook.
-        LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, fn () => null);
+        LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, fn () => null);
         $this->assertSame(['hook'], $calls);
     }
 
@@ -90,7 +90,7 @@ class LockManagerTest extends TestCase
     {
         $calls = 0;
 
-        LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, function () use (&$calls) {
+        LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, function () use (&$calls) {
             LockManager::onOutermostRelease($this->lockPath, 42, function () use (&$calls) {
                 $calls++;
             });
@@ -106,7 +106,7 @@ class LockManagerTest extends TestCase
     {
         $owners = [];
 
-        LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, function () use (&$owners) {
+        LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, function () use (&$owners) {
             LockManager::onOutermostRelease($this->lockPath, 1, function () use (&$owners) {
                 $owners[] = 1;
             });
@@ -122,12 +122,12 @@ class LockManagerTest extends TestCase
     {
         $acquired = null;
 
-        LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, function () use (&$acquired) {
+        LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, function () use (&$acquired) {
             LockManager::onOutermostRelease($this->lockPath, 1, function () use (&$acquired) {
                 // The flock must already be gone: a fresh exclusive
                 // acquisition with a zero waiting budget can only succeed
                 // if the shared lock was released before the hooks ran.
-                $acquired = LockManager::withLifecycleLock($this->lockPath, null, LOCK_EX, 0.0, fn () => true);
+                $acquired = LockManager::withLifecycleLock($this->lockPath, LOCK_EX, 0.0, fn () => true);
             });
         });
 
@@ -138,7 +138,7 @@ class LockManagerTest extends TestCase
     {
         $secondRan = false;
 
-        LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, function () use (&$secondRan) {
+        LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, function () use (&$secondRan) {
             LockManager::onOutermostRelease($this->lockPath, 1, function () {
                 throw new RuntimeException('hook failure');
             });
@@ -155,7 +155,7 @@ class LockManagerTest extends TestCase
         $hookRan = false;
 
         try {
-            LockManager::withLifecycleLock($this->lockPath, null, LOCK_SH, 1.0, function () use (&$hookRan) {
+            LockManager::withLifecycleLock($this->lockPath, LOCK_SH, 1.0, function () use (&$hookRan) {
                 LockManager::onOutermostRelease($this->lockPath, 1, function () use (&$hookRan) {
                     $hookRan = true;
                 });

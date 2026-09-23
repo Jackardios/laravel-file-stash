@@ -328,7 +328,7 @@ class FileStash implements FileStashContract
      * next chunk starts (bounding open file descriptors). In that mode only
      * the lifecycle lock — not per-file locks — protects the files during
      * the callback, so prune/clear/forget of another worker cannot remove
-     * them, but a v4 worker or manual deletion could.
+     * them, but a manual deletion could.
      *
      * @param  array<int, File>  $files
      * @param  callable(array<int, File>, array<int, string>): mixed  $callback
@@ -731,7 +731,6 @@ class FileStash implements FileStashContract
     {
         return LockManager::withLifecycleLock(
             $this->getLifecycleLockPath(),
-            $this->getLegacyLifecycleLockPath(),
             LOCK_SH,
             $this->config['lifecycle_lock_timeout'],
             $callback
@@ -752,7 +751,6 @@ class FileStash implements FileStashContract
     {
         return LockManager::withLifecycleLock(
             $this->getLifecycleLockPath(),
-            $this->getLegacyLifecycleLockPath(),
             LOCK_EX,
             $this->config['lifecycle_lock_timeout'],
             $callback
@@ -826,45 +824,6 @@ class FileStash implements FileStashContract
     }
 
     /**
-     * Path of the v4-style lifecycle lock in the system temp directory, or
-     * null when disabled. Acquired in addition to the in-cache lock so that
-     * workers running file-stash v4 and v5 side by side (rolling deploy)
-     * still coordinate. See the `legacy_lifecycle_lock` config option.
-     */
-    protected function getLegacyLifecycleLockPath(): ?string
-    {
-        if (! $this->config['legacy_lifecycle_lock']) {
-            return null;
-        }
-
-        $suffix = hash('sha256', $this->normalizePathForLock($this->config['path']));
-
-        return sys_get_temp_dir().'/laravel-file-stash/locks/'.$suffix.'.lock';
-    }
-
-    /**
-     * Normalize cache path before deriving lifecycle lock key.
-     */
-    protected function normalizePathForLock(string $path): string
-    {
-        $realPath = @realpath($path);
-        if ($realPath !== false) {
-            return $realPath;
-        }
-
-        $normalized = rtrim(str_replace('\\', '/', $path), '/');
-        if ($normalized === '') {
-            return '/';
-        }
-
-        if (preg_match('/^[A-Za-z]:$/', $normalized) === 1) {
-            return $normalized.'/';
-        }
-
-        return $normalized;
-    }
-
-    /**
      * Check for existence of a file from a storage disk.
      *
      * @throws MimeTypeIsNotAllowedException
@@ -905,12 +864,11 @@ class FileStash implements FileStashContract
      * Delete a cached entry if it is not in use, recording eviction metrics
      * and dispatching CacheFileEvicted on success.
      *
-     * @param  resource|null  $stream  See unlinkLocked() — ownership is taken.
      * @param  (callable(array<string, mixed>): bool)|null  $verify  See unlinkLocked().
      */
-    protected function deleteEntry(string $path, string $evictionReason = 'pruned', $stream = null, ?callable $verify = null): DeleteResult
+    protected function deleteEntry(string $path, string $evictionReason = 'pruned', ?callable $verify = null): DeleteResult
     {
-        $result = $this->unlinkLocked($path, $stream, $verify);
+        $result = $this->unlinkLocked($path, $verify);
 
         if ($result === DeleteResult::Deleted) {
             $this->metrics->evictions++;
@@ -928,30 +886,20 @@ class FileStash implements FileStashContract
      * locked stream. A mismatch means the entry was concurrently replaced
      * with a new file — deleting it would remove someone else's data.
      *
-     * A caller-provided $stream is upgraded to LOCK_EX in place, avoiding
-     * the close-then-reopen window in which the path could be republished
-     * and the fresh file deleted by mistake. Ownership of the stream is
-     * taken: it is always closed before returning, and it must not be
-     * reused by the caller — a failed upgrade may have dropped its shared
-     * lock entirely.
-     *
      * No events or metrics here: infrastructure cleanup (temp files,
      * claims) goes through this method directly, entry deletions go
      * through deleteEntry().
      *
-     * @param  resource|null  $stream  An already-open handle for $path whose lock is upgraded in place.
      * @param  (callable(array<string, mixed>): bool)|null  $verify  Deletion guard run under the exclusive
      *                                                               lock with the fstat() of the locked inode; returning false skips the deletion.
      */
-    protected function unlinkLocked(string $path, $stream = null, ?callable $verify = null): DeleteResult
+    protected function unlinkLocked(string $path, ?callable $verify = null): DeleteResult
     {
-        if ($stream === null) {
-            $stream = @fopen($path, 'rb');
-            if ($stream === false) {
-                clearstatcache(true, $path);
+        $stream = @fopen($path, 'rb');
+        if ($stream === false) {
+            clearstatcache(true, $path);
 
-                return file_exists($path) ? DeleteResult::Skipped : DeleteResult::Gone;
-            }
+            return file_exists($path) ? DeleteResult::Skipped : DeleteResult::Gone;
         }
 
         try {
@@ -1052,8 +1000,9 @@ class FileStash implements FileStashContract
      * Read and validate a file that already exists in cache.
      *
      * Published entries are only ever replaced atomically (rename) or deleted
-     * under an exclusive lock, so a shared lock plus an nlink/size check is
-     * enough to guarantee a complete file.
+     * under an exclusive lock, so a shared lock plus an nlink check is enough
+     * to guarantee a complete file. Zero-byte entries are valid content:
+     * fsync-before-publish rules out power-loss zeroes.
      *
      * @return RetrievedFile|null
      */
@@ -1080,29 +1029,6 @@ class FileStash implements FileStashContract
 
             if ($stat['nlink'] === 0) {
                 // Deleted while we were opening it; retry.
-                return null;
-            }
-
-            if ($stat['size'] === 0 && $this->config['legacy_lifecycle_lock']) {
-                // While v4 workers may still be around, a zero-length entry is
-                // a v4 artifact: purge and retry. Once the legacy lock is
-                // disabled, zero-byte entries are valid (fsync-before-publish
-                // rules out power-loss zeroes) and are served as-is.
-                //
-                // The shared lock is upgraded in place (deleteEntry takes
-                // ownership of the stream): no close-then-reopen window in
-                // which a freshly republished entry could be deleted by
-                // mistake, and the verify guard rechecks the inode under the
-                // exclusive lock. Other readers make the upgrade fail →
-                // Skipped → the retry loop re-reads or re-downloads.
-                $closeStream = false;
-                $this->deleteEntry(
-                    $cachedPath,
-                    'zero_size',
-                    $cachedFileStream,
-                    static fn (array $s): bool => $s['size'] === 0 && ($s['nlink'] ?? 0) > 0
-                );
-
                 return null;
             }
 
