@@ -9,6 +9,7 @@ use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Exception\TooManyRedirectsException;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Promise\Create;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -37,6 +38,8 @@ use Jackardios\FileStash\Support\DeleteResult;
 use Jackardios\FileStash\Testing\FileStashFake;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\StreamInterface;
 use Psr\Http\Message\UriInterface;
 use ReflectionMethod;
 
@@ -101,6 +104,44 @@ class FileStashTest extends TestCase
         ]);
 
         return new FileStash(array_merge(['path' => $this->cachePath], $config), $client);
+    }
+
+    /**
+     * A handler that streams bodies like the curl handler: on_headers first,
+     * then the body into the sink, and a short sink write aborts the
+     * transfer (CURLE_WRITE_ERROR). MockHandler ignores short writes.
+     *
+     * @param  array<int, ResponseInterface>  $responses
+     */
+    protected function curlLikeHandler(array $responses): callable
+    {
+        return static function (RequestInterface $request, array $options) use (&$responses) {
+            $response = array_shift($responses);
+
+            try {
+                ($options['on_headers'] ?? static fn () => null)($response);
+            } catch (\Throwable $exception) {
+                return Create::rejectionFor(new RequestException(
+                    message: 'An error was encountered during the on_headers event',
+                    request: $request,
+                    previous: $exception,
+                ));
+            }
+
+            $sink = $options['sink'] ?? null;
+            if ($sink instanceof StreamInterface) {
+                $body = (string) $response->getBody();
+                if ($body !== '' && $sink->write($body) < strlen($body)) {
+                    return Create::rejectionFor(new RequestException(
+                        message: 'cURL error 23: Failure writing output to destination',
+                        request: $request,
+                    ));
+                }
+                $response = $response->withBody($sink);
+            }
+
+            return Create::promiseFor($response);
+        };
     }
 
     /**
@@ -2765,11 +2806,15 @@ class FileStashTest extends TestCase
     {
         // max_file_size sits above the final body but below the redirect
         // decoy body: the download only succeeds if the decoy is not counted.
+        // MockHandler ignores short writes (the next hop's reset hides a
+        // counted decoy), curl aborts on them — hence the curl-like handler.
         $finalBody = str_repeat('F', 100);
-        $cache = $this->createCacheWithMockClient([
-            new Response(301, ['Location' => 'https://files/final.jpg'], str_repeat('D', 300)),
-            new Response(200, [], $finalBody),
-        ], ['max_file_size' => 150]);
+        $cache = new FileStash(['path' => $this->cachePath, 'max_file_size' => 150], new Client([
+            'handler' => HandlerStack::create($this->curlLikeHandler([
+                new Response(301, ['Location' => 'https://files/final.jpg'], str_repeat('D', 300)),
+                new Response(200, [], $finalBody),
+            ])),
+        ]));
 
         $path = $cache->get(new GenericFile('https://files/image.jpg'), $this->noop);
 
