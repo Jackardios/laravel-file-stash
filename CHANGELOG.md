@@ -186,6 +186,10 @@ for the full migration guide, including how to switch workers over.
 - `prune()` re-checks an entry's access time under the exclusive lock
   before evicting it: an entry read after prune collected its statistics
   is kept instead of being evicted on stale data.
+- A cache entry deleted outside the lock protocol (e.g. a script wiping
+  the directory) right before a reader's access-time update is no longer
+  recreated as an empty file and served as valid content; the reader
+  re-downloads instead.
 - `getOnce()`/`batchOnce()` no longer throw after the callback succeeded
   when the cleanup cannot acquire the lifecycle lock in time: a warning is
   logged, the result is returned, and the entry is left for `prune()`.

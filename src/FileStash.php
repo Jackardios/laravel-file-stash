@@ -1056,9 +1056,20 @@ class FileStash implements FileStashContract
                 return null;
             }
 
+            if (! $this->touchEntry($cachedPath, $cachedFileStream, $stat)) {
+                // Deleted behind our back (not through the lock protocol);
+                // retry.
+                return null;
+            }
+
+            $this->metrics->hits++;
+            $this->dispatchEvent(new CacheHit($file, $cachedPath));
             $closeStream = false;
 
-            return $this->retrieveExistingFile($cachedPath, $cachedFileStream, $file, $stat);
+            return [
+                'path' => $cachedPath,
+                'stream' => $cachedFileStream,
+            ];
         } finally {
             if ($closeStream && is_resource($cachedFileStream)) {
                 fclose($cachedFileStream);
@@ -1334,38 +1345,45 @@ class FileStash implements FileStashContract
     }
 
     /**
-     * Get path and stream for a file that exists in the cache.
+     * Update the access time prune() uses to find unused entries (throttled
+     * by touch_interval).
      *
-     * @param  resource  $cachedFileStream
-     * @param  File|null  $file  The file object, used for events/metrics
-     * @param  array<string, mixed>|null  $stat  File stat array from fstat(), used for touch throttling
-     * @return RetrievedFile
+     * touch() works by path and creates a missing file. Entries are only
+     * deleted under an exclusive lock, which our shared lock excludes, but a
+     * deletion outside the lock protocol (e.g. a deploy script wiping the
+     * directory) between our fstat() and the touch() would leave a new,
+     * empty file under the entry name — served as valid content from then
+     * on. The nlink of the locked inode tells whether that happened.
+     *
+     * @param  resource  $stream  The entry's stream, holding a shared lock.
+     * @param  array<string, mixed>  $stat  fstat() of the locked stream.
+     * @return bool False when the entry vanished (the caller retries).
      */
-    protected function retrieveExistingFile(string $cachedPath, $cachedFileStream, ?File $file = null, ?array $stat = null): array
+    protected function touchEntry(string $cachedPath, $stream, array $stat): bool
     {
         $touchInterval = $this->config['touch_interval'];
-        $shouldTouch = true;
-
-        if ($touchInterval > 0 && is_array($stat) && isset($stat['atime']) && is_int($stat['atime'])) {
-            $shouldTouch = (time() - $stat['atime']) >= $touchInterval;
+        if ($touchInterval > 0 && is_int($stat['atime'] ?? null) && (time() - $stat['atime']) < $touchInterval) {
+            return true;
         }
 
-        if ($shouldTouch && ! @touch($cachedPath)) {
+        if (! @touch($cachedPath)) {
             $this->logger->warning('Failed to update access time for cached file', [
                 'path' => $cachedPath,
                 'error' => error_get_last()['message'] ?? 'Unknown error',
             ]);
         }
 
-        $this->metrics->hits++;
-        if ($file !== null) {
-            $this->dispatchEvent(new CacheHit($file, $cachedPath));
+        /** @var array<string, mixed>|false $after */
+        $after = fstat($stream);
+        if (! is_array($after) || $after['nlink'] !== 0) {
+            return true;
         }
 
-        return [
-            'path' => $cachedPath,
-            'stream' => $cachedFileStream,
-        ];
+        // Remove the empty file touch() may have created; a verify guard,
+        // because a claim holder may have published a real entry meanwhile.
+        $this->unlinkLocked($cachedPath, static fn (array $s): bool => $s['size'] === 0);
+
+        return false;
     }
 
     /**

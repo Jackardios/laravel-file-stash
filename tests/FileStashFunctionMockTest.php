@@ -620,6 +620,29 @@ class FileStashFunctionMockTest extends TestCase
         $cache->batch([]);
     }
 
+    public function testEntryDeletedExternallyBeforeTouchIsNotRecreatedEmpty()
+    {
+        $cache = $this->createCacheWithMockFixtures(['touch_interval' => 0]);
+        $url = 'fixtures://test-file.txt';
+        $cachedPath = $this->getCachedPath($url);
+        file_put_contents($cachedPath, 'stale');
+
+        // Someone deletes the cache directory contents (e.g. a deploy script)
+        // between the reader's fstat() and its touch(): touch() would create
+        // a new, empty file under the entry name.
+        $touchMock = $this->getFunctionMock('Jackardios\\FileStash', 'touch');
+        $touchMock->expects($this->atLeastOnce())->willReturnCallback(function (string $path): bool {
+            @unlink($path);
+
+            return \touch($path);
+        });
+
+        $content = $cache->get(new GenericFile($url), fn ($file, $path) => file_get_contents($path));
+
+        $this->assertSame(file_get_contents(__DIR__.'/files/test-file.txt'), $content);
+        $this->assertSame($content, file_get_contents($cachedPath));
+    }
+
     public function testPruneTimeout()
     {
         // Create several files that should be pruned by age
