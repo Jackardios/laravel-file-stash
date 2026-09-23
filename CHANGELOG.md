@@ -16,7 +16,7 @@ for the full migration guide, including rolling-deploy instructions.
   by known security advisories, so it is not supported.
 - Dependency floors are the oldest versions without known security
   advisories (Composer 2.9+ refuses to install insecure versions by
-  default): `illuminate/* ^12.61.1 || ^13.12`, `guzzlehttp/guzzle ^7.15.2`,
+  default): `illuminate/* ^12.61.1 || ^13.12`, `guzzlehttp/guzzle ^7.15.2 || ^8.0.1`,
   `symfony/finder ^7.2 || ^8`; PHPUnit 11–13.
 
 ### Breaking: write-protocol redesign
@@ -132,6 +132,10 @@ for the full migration guide, including rolling-deploy instructions.
 - Retry backoff applies jitter before the 30 s clamp, so the ceiling is a
   hard bound on the actual sleep (the sleep holds the entry claim and the
   shared lifecycle lock).
+- Retry classification: a transfer that breaks after the response headers
+  arrived (connection reset mid-body) is a network error and is retried;
+  an exhausted redirect budget (`TooManyRedirectsException`) is not.
+- Guzzle 8 is supported alongside Guzzle 7.
 
 ### Breaking: API surface
 

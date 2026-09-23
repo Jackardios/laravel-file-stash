@@ -5,6 +5,8 @@ namespace Jackardios\FileStash\Tests;
 use Exception;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Exception\TooManyRedirectsException;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Psr7\Request;
@@ -186,7 +188,7 @@ class FileStashTest extends TestCase
         $cachedPath = $this->getCachedPath($url);
 
         $cache = $this->createCacheWithMockClient([
-            new Response(200, ['Content-Length' => 100], $this->getTestImageContent()),
+            new Response(200, ['Content-Length' => '100'], $this->getTestImageContent()),
         ], ['max_file_size' => 1]);
 
         try {
@@ -648,7 +650,7 @@ class FileStashTest extends TestCase
     {
         $file = new GenericFile('https://example.com/file');
         $cache = $this->createCacheWithMockClient(
-            [new Response(200, ['content-length' => 100])],
+            [new Response(200, ['content-length' => '100'])],
             ['max_file_size' => 1]
         );
 
@@ -1003,6 +1005,52 @@ class FileStashTest extends TestCase
 
         $path = $cache->get($file, $this->noop);
         $this->assertEquals($cachedPath, $path);
+    }
+
+    public function testHttpRetryOnTransferFailureAfterHeaders()
+    {
+        $url = 'https://files/image.jpg';
+
+        // The transfer broke after the 200 headers arrived (e.g. connection
+        // reset mid-body): a network error, even though a response exists.
+        $mock = new MockHandler([
+            RequestException::create(new Request('GET', $url), new Response(200)),
+            new Response(200, [], 'payload'),
+        ]);
+
+        $cache = new FileStash([
+            'path' => $this->cachePath,
+            'http_retries' => 1,
+            'http_retry_delay' => 1,
+        ], new Client(['handler' => HandlerStack::create($mock)]));
+
+        $this->assertSame('payload', $cache->get(new GenericFile($url), fn ($file, $path) => file_get_contents($path)));
+        $this->assertSame(0, $mock->count());
+    }
+
+    public function testHttpNoRetryOnTooManyRedirects()
+    {
+        $redirects = array_map(
+            static fn (int $i): Response => new Response(302, ['Location' => "https://files/hop-{$i}"]),
+            range(1, 6)
+        );
+        $mock = new MockHandler($redirects);
+
+        $cache = new FileStash([
+            'path' => $this->cachePath,
+            'max_redirects' => 1,
+            'http_retries' => 2,
+            'http_retry_delay' => 1,
+        ], new Client(['handler' => HandlerStack::create($mock)]));
+
+        try {
+            $cache->get(new GenericFile('https://files/image.jpg'));
+            $this->fail('Expected TooManyRedirectsException was not thrown');
+        } catch (TooManyRedirectsException) {
+            // An exhausted redirect budget fails the same way on every attempt.
+        }
+
+        $this->assertSame(4, $mock->count(), 'Only the first attempt (request + 1 redirect) may be sent.');
     }
 
     public function testConfigValidationThrowsOnInvalidMaxSize()
@@ -1365,7 +1413,7 @@ class FileStashTest extends TestCase
     public function testExistsRemoteUnlimitedFileSize()
     {
         $mock = new MockHandler([
-            new Response(200, ['content-length' => 1000000]), // 1MB
+            new Response(200, ['content-length' => '1000000']), // 1MB
         ]);
 
         $cache = new FileStash([
@@ -2605,7 +2653,7 @@ class FileStashTest extends TestCase
     public function testExistsRemoteAllowsMimeTypeWithCharsetParameter()
     {
         $cache = $this->createCacheWithMockClient([
-            new Response(200, ['Content-Type' => 'Image/JPEG; charset=binary', 'Content-Length' => 100]),
+            new Response(200, ['Content-Type' => 'Image/JPEG; charset=binary', 'Content-Length' => '100']),
         ], ['mime_types' => ['image/jpeg']]);
 
         $this->assertTrue($cache->exists(new GenericFile('https://files/image.jpg')));

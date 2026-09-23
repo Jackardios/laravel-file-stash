@@ -4,8 +4,9 @@ namespace Jackardios\FileStash\Http;
 
 use Closure;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
-use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Exception\TooManyRedirectsException;
 use Jackardios\FileStash\Contracts\File;
 use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
 use Jackardios\FileStash\Exceptions\FileIsTooLargeException;
@@ -259,7 +260,7 @@ class RemoteFetcher
                     ? $exception->statusCode
                     : $this->extractStatusCode($exception);
 
-                if ($attemptNo > $maxRetries || ! $this->isRetryableStatus($statusCode)) {
+                if ($attemptNo > $maxRetries || ! $this->isRetryable($exception, $statusCode)) {
                     throw $exception;
                 }
 
@@ -274,26 +275,33 @@ class RemoteFetcher
     }
 
     /**
-     * Determine whether an HTTP status is worth retrying (0 = network error).
+     * Determine whether a failure is worth retrying: network errors
+     * (status 0), 429 and 5xx. An exhausted redirect budget fails the same
+     * way every time.
      */
-    protected function isRetryableStatus(int $statusCode): bool
+    protected function isRetryable(GuzzleException|FailedToRetrieveFileException $exception, int $statusCode): bool
     {
+        if ($exception instanceof TooManyRedirectsException) {
+            return false;
+        }
+
         return $statusCode === 0 || $statusCode === 429 || $statusCode >= 500;
     }
 
     /**
-     * Extract the HTTP status code from a Guzzle exception (0 if unavailable).
+     * Extract the HTTP status code of an HTTP error response (4xx/5xx from
+     * a client with http_errors=true), or 0 for anything else.
+     *
+     * A transfer that broke after the headers arrived may carry the partial
+     * response, but its status is not the reason for the failure: it counts
+     * as a network error. BadResponseException exposes a non-null response
+     * on both Guzzle 7 and 8 (Guzzle 8 removed RequestException::getResponse()).
      */
     protected function extractStatusCode(GuzzleException $exception): int
     {
-        if ($exception instanceof RequestException && $exception->hasResponse()) {
-            $response = $exception->getResponse();
-            if ($response !== null) {
-                return $response->getStatusCode();
-            }
-        }
-
-        return 0;
+        return $exception instanceof BadResponseException
+            ? $exception->getResponse()->getStatusCode()
+            : 0;
     }
 
     /**
@@ -333,7 +341,12 @@ class RemoteFetcher
      * Guzzle `read_timeout` option only applies to the PHP stream handler and
      * would be a no-op with the (default) curl handler.
      *
-     * @return array<string, mixed>
+     * @return array{
+     *   timeout: float,
+     *   connect_timeout: float,
+     *   allow_redirects: array{max: int, on_redirect: Closure(RequestInterface, ResponseInterface, UriInterface): void},
+     *   curl?: array<int, int>
+     * }
      */
     protected function requestOptions(): array
     {

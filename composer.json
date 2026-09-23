@@ -11,7 +11,7 @@
         "illuminate/filesystem": "^12.61.1 || ^13.12",
         "illuminate/support": "^12.61.1 || ^13.12",
         "symfony/finder": "^7.2 || ^8.0",
-        "guzzlehttp/guzzle": "^7.15.2",
+        "guzzlehttp/guzzle": "^7.15.2 || ^8.0.1",
         "psr/http-message": "^1.1 || ^2.0",
         "psr/log": "^2.0 || ^3.0"
     },

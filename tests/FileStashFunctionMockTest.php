@@ -667,8 +667,8 @@ class FileStashFunctionMockTest extends TestCase
         // unlink the freshly renamed entry in between. The writer detects this
         // via the nlink recheck and repeats the download under the same claim.
         $cache = $this->createCacheWithMockClient([
-            new Response(200, ['Content-Length' => 5], 'abcde'),
-            new Response(200, ['Content-Length' => 5], 'abcde'),
+            new Response(200, ['Content-Length' => '5'], 'abcde'),
+            new Response(200, ['Content-Length' => '5'], 'abcde'),
         ]);
 
         $renameCalls = 0;
@@ -701,7 +701,7 @@ class FileStashFunctionMockTest extends TestCase
         // path. If a writer atomically re-publishes the entry in between, the
         // dev/ino comparison must detect it and skip the deletion.
         $cache = $this->createCacheWithMockClient([
-            new Response(200, ['Content-Length' => 5], 'abcde'),
+            new Response(200, ['Content-Length' => '5'], 'abcde'),
         ]);
 
         $file = new GenericFile('https://example.com/inode.bin');
