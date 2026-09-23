@@ -4,7 +4,9 @@ namespace Jackardios\FileStash\Console\Commands;
 
 use Illuminate\Console\Command;
 use Jackardios\FileStash\Contracts\FileStash as FileStashContract;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'file-stash:prune', aliases: ['prune-file-stash'])]
 class PruneFileStash extends Command
 {
     /**
@@ -21,13 +23,12 @@ class PruneFileStash extends Command
      */
     protected $description = 'Remove cached files that are too old or exceed the maximum cache size';
 
-    public function __construct()
-    {
-        parent::__construct();
-
-        // Old v4 command name; deprecated, will be removed in v6.
-        $this->setAliases(['prune-file-stash']);
-    }
+    /**
+     * The old v4 command name; deprecated, will be removed in v6.
+     *
+     * @var array<int, string>
+     */
+    protected $aliases = ['prune-file-stash'];
 
     /**
      * Execute the console command.

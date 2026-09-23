@@ -148,7 +148,10 @@ for the full migration guide, including how to switch workers over.
 ### Breaking: API surface
 
 - The prune command was renamed to `file-stash:prune`; `prune-file-stash`
-  remains as a deprecated alias until v6.
+  remains as a deprecated alias until v6. It is registered lazily
+  (`#[AsCommand]`); the `command.file-stash.prune` container binding is gone.
+- The config is published with `--tag=file-stash-config` (the generic
+  `config` tag still works) to `config_path()`.
 - `CacheMiss` lost its `$url` property (use `$file->getUrl()`); all event
   classes are now `final readonly`.
 - `FailedToRetrieveFileException` gained `public readonly int $statusCode`
@@ -212,6 +215,11 @@ for the full migration guide, including how to switch workers over.
   the directory) right before a reader's access-time update is no longer
   recreated as an empty file and served as valid content; the reader
   re-downloads instead.
+- The container-built instance logs through the application logger (its
+  warnings were sent to a `NullLogger`), and events reach a dispatcher
+  swapped in after the cache was resolved (`Event::fake()`).
+- An invalid `prune_interval` cron expression is reported and the task
+  skipped, instead of making `schedule:run` fail for every other task.
 - `getOnce()`/`batchOnce()` no longer throw after the callback succeeded
   when the cleanup cannot acquire the lifecycle lock in time: a warning is
   logged, the result is returned, and the entry is left for `prune()`.

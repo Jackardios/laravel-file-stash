@@ -87,7 +87,7 @@ The service provider and `FileStash` facade are auto-discovered.
 Publish the config (optional):
 
 ```bash
-php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProvider" --tag="config"
+php artisan vendor:publish --tag=file-stash-config
 ```
 
 **Requirements:** PHP ^8.3, Laravel ^12 / ^13
@@ -442,7 +442,7 @@ app()->terminating(function () {
 All settings support environment variables. Publish the config to customize:
 
 ```bash
-php artisan vendor:publish --provider="Jackardios\FileStash\FileStashServiceProvider" --tag="config"
+php artisan vendor:publish --tag=file-stash-config
 ```
 
 ### Cache limits
@@ -518,7 +518,7 @@ IPv6 literals — in URLs and in `allowed_hosts` — are canonicalized before co
 
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `prune_interval` | `FILE_STASH_PRUNE_INTERVAL` | `*/5 * * * *` | Cron schedule for auto-pruning |
+| `prune_interval` | `FILE_STASH_PRUNE_INTERVAL` | `*/5 * * * *` | Cron schedule for auto-pruning (`null` disables it; an invalid expression is reported and the task skipped) |
 | `prune_timeout` | `FILE_STASH_PRUNE_TIMEOUT` | `300` | Prune timeout (seconds) |
 
 ### Performance

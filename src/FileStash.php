@@ -4,6 +4,7 @@ namespace Jackardios\FileStash;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
+use Illuminate\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Filesystem\Filesystem;
@@ -94,7 +95,9 @@ class FileStash implements FileStashContract
     protected LoggerInterface $logger;
 
     /**
-     * Event dispatcher for cache events.
+     * Event dispatcher for cache events. Without an injected one, the
+     * container's dispatcher is looked up on every dispatch, so swapping it
+     * later (Event::fake()) takes effect.
      */
     protected ?Dispatcher $dispatcher;
 
@@ -130,9 +133,7 @@ class FileStash implements FileStashContract
         $this->storage = $storage;
         $this->logger = $logger ?: new NullLogger;
         $this->remoteFetcher = new RemoteFetcher($this->config, $client, $this->logger);
-        $this->dispatcher = $this->config['events_enabled']
-            ? ($dispatcher ?? $this->resolveEventDispatcher())
-            : null;
+        $this->dispatcher = $dispatcher;
         $this->metrics = new CacheMetrics;
     }
 
@@ -170,11 +171,12 @@ class FileStash implements FileStashContract
 
     protected function resolveEventDispatcher(): ?Dispatcher
     {
-        try {
-            return app(Dispatcher::class);
-        } catch (\Throwable) {
+        $container = Container::getInstance();
+        if (! $container->bound(Dispatcher::class)) {
             return null;
         }
+
+        return $container->make(Dispatcher::class);
     }
 
     /**
@@ -190,7 +192,11 @@ class FileStash implements FileStashContract
      */
     protected function dispatchEvent(object $event): void
     {
-        $this->dispatcher?->dispatch($event);
+        if (! $this->config['events_enabled']) {
+            return;
+        }
+
+        ($this->dispatcher ?? $this->resolveEventDispatcher())?->dispatch($event);
     }
 
     /**

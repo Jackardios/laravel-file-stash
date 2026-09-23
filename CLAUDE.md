@@ -60,7 +60,7 @@ Cache layout inside `config['path']`: entry = `{sha256(url)}`; temp = `{sha256}.
 
 ### Service Provider & Facade
 
-- **`src/FileStashServiceProvider.php`** — binds `file-stash` (aliased to the concrete class and the contract), registers the scheduled `file-stash:prune` (disabled when `prune_interval` is null; console-only), listens to `cache:clearing`.
+- **`src/FileStashServiceProvider.php`** — binds `file-stash` (aliased to the concrete class and the contract; gets the app logger, the event dispatcher is looked up per dispatch so `Event::fake()` works after resolution), registers the command lazily (`#[AsCommand]`), schedules `file-stash:prune` in `callAfterResolving(Schedule::class)` (disabled when `prune_interval` is null; an invalid cron is `report()`ed and skipped), listens to `cache:clearing`, publishes the config under the `file-stash-config` tag (and the generic `config`).
 - **`src/Facades/FileStash.php`** — static access; `FileStash::fake()` returns `FileStashFake`.
 - **`src/Console/Commands/PruneFileStash.php`** — `file-stash:prune` with deprecated alias `prune-file-stash`.
 
