@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Laravel package for fetching and caching files from HTTP(S) sources or Laravel storage disks, designed for concurrent processing with multiple parallel queue workers. Safety is built on `flock()`, atomic `rename()` publishing, and inode checks — the cache directory must live on a local POSIX filesystem (no NFS).
 
-**Supported versions:** PHP ^8.2, Laravel ^12 || ^13
+**Supported versions:** PHP ^8.3, Laravel ^12.61.1 || ^13.12
 
 ## Commands
 

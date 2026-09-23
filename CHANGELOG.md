@@ -10,11 +10,14 @@ for the full migration guide, including rolling-deploy instructions.
 
 ### Breaking: requirements
 
-- PHP `^8.2` (was `^8.1`); CI covers PHP 8.2–8.5.
+- PHP `^8.3` (was `^8.1`); CI covers PHP 8.3–8.5.
 - Laravel `^12 || ^13` (was `^10 || ^11 || ^12`). Laravel 11 left its
   security-fix window before this release and every 11.x version is affected
   by known security advisories, so it is not supported.
-- `symfony/finder ^7 || ^8`, `guzzlehttp/guzzle ^7.8`, PHPUnit 11–13.
+- Dependency floors are the oldest versions without known security
+  advisories (Composer 2.9+ refuses to install insecure versions by
+  default): `illuminate/* ^12.61.1 || ^13.12`, `guzzlehttp/guzzle ^7.15.2`,
+  `symfony/finder ^7.2 || ^8`; PHPUnit 11–13.
 
 ### Breaking: write-protocol redesign
 
