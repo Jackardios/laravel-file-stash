@@ -89,7 +89,6 @@ class HostValidatorTest extends TestCase
             '169.254.1.1',
             '[::1]',
             '[fd00::1]',
-            'localhost', // resolves to a loopback address
             // ranges missed by PHP's filter_var reserved-range flags
             '100.64.0.1',        // CGNAT
             '100.100.100.200',   // Alibaba Cloud metadata

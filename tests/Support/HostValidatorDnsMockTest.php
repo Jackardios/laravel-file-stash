@@ -31,6 +31,17 @@ class HostValidatorDnsMockTest extends TestCase
         $this->assertTrue($validator->isPrivateHost('unresolvable.example'));
     }
 
+    public function testHostnameResolvingToLoopbackIsBlocked()
+    {
+        $this->getFunctionMock(self::NS, 'dns_get_record')
+            ->expects($this->once())->willReturn([]);
+        $this->getFunctionMock(self::NS, 'gethostbynamel')
+            ->expects($this->once())->willReturn(['127.0.0.1']);
+
+        $validator = new HostValidator(null, true);
+        $this->assertTrue($validator->isPrivateHost('localhost'));
+    }
+
     public function testEtcHostsOnlyPublicHostIsAllowed()
     {
         // dns_get_record skips /etc/hosts (docker/CI); gethostbynamel covers it.
