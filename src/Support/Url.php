@@ -86,7 +86,9 @@ final class Url
     }
 
     /**
-     * Remove userinfo (credentials) from a URL for safe logging.
+     * Redact a URL for safe logging: userinfo and query parameter values
+     * (presigned-URL signatures, tokens) become `***`, the fragment is
+     * dropped. Parameter names stay readable for debugging.
      */
     public static function sanitizeForLogging(string $url): string
     {
@@ -109,13 +111,28 @@ final class Url
         }
         $sanitized .= $parts['path'] ?? '';
         if (isset($parts['query'])) {
-            $sanitized .= '?'.$parts['query'];
-        }
-        if (isset($parts['fragment'])) {
-            $sanitized .= '#'.$parts['fragment'];
+            $sanitized .= '?'.implode('&', array_map(
+                static fn (string $pair): string => str_contains($pair, '=') ? strstr($pair, '=', true).'=***' : '***',
+                explode('&', $parts['query'])
+            ));
         }
 
         return $sanitized;
+    }
+
+    /**
+     * Apply sanitizeForLogging() to every URL inside a free-form text, such
+     * as an HTTP client's exception message that repeats the request URI.
+     */
+    public static function redactUrls(string $text): string
+    {
+        // A URL ends at whitespace, quotes or angle brackets, and does not
+        // swallow trailing sentence punctuation.
+        return preg_replace_callback(
+            '~[a-z][a-z0-9+.-]*://[^\s`\'"<>]*[^\s`\'"<>.,;:!?)]~i',
+            static fn (array $m): string => self::sanitizeForLogging($m[0]),
+            $text
+        ) ?? $text;
     }
 
     /**

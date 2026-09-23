@@ -234,6 +234,10 @@ for the full migration guide, including how to switch workers over.
   stream wrapper) fails immediately instead of being treated as contended:
   with an indefinite timeout (`-1`) the lock loop used to spin forever.
   Indefinite waits now block in the kernel instead of polling.
+- HTTP retry warnings no longer leak secrets into logs: query parameter
+  values (presigned-URL signatures, tokens) and fragments are redacted in
+  the logged URL and in the logged exception message, which Guzzle builds
+  from the full request URI. Exceptions thrown to the caller are unchanged.
 - Numerous smaller correctness fixes: dead code paths removed, per-URL path
   cache removed, `fflush()` before MIME checks and publishing, Windows
   rename retries.

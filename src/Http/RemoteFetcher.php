@@ -276,7 +276,7 @@ class RemoteFetcher
                     throw $exception;
                 }
 
-                $context = ['exception' => $exception->getMessage()];
+                $context = ['exception' => Url::redactUrls($exception->getMessage())];
                 if ($statusCode > 0) {
                     $context['status_code'] = $statusCode;
                 }

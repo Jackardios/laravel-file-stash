@@ -866,6 +866,36 @@ class FileStashTest extends TestCase
         $this->assertTrue($cache->exists($file));
     }
 
+    public function testRetryLogRedactsCredentialsAndQueryStrings()
+    {
+        // Presigned URLs carry their signature in the query string, and
+        // Guzzle's network-error messages repeat the full request URI.
+        $url = 'https://user:pass@files/image.jpg?X-Amz-Signature=s3cr3t&token=t0k3n#frag';
+        $logger = new RecordingLogger;
+        $mock = new MockHandler([
+            new ConnectException(
+                'cURL error 28: Operation timed out (see https://curl.haxx.se/libcurl/c/libcurl-errors.html) for '.$url,
+                new Request('GET', $url)
+            ),
+            new Response(200, [], 'body'),
+        ]);
+        $cache = new FileStash(
+            ['path' => $this->cachePath, 'http_retries' => 1, 'http_retry_delay' => 1],
+            new Client(['handler' => HandlerStack::create($mock)]),
+            logger: $logger
+        );
+
+        $cache->get(new GenericFile($url), $this->noop);
+
+        $this->assertCount(1, $logger->records);
+        $logged = json_encode($logger->records, JSON_UNESCAPED_SLASHES);
+        foreach (['s3cr3t', 't0k3n', 'pass', 'frag'] as $secret) {
+            $this->assertStringNotContainsString($secret, $logged);
+        }
+        $this->assertSame('https://***:***@files/image.jpg?X-Amz-Signature=***&token=***', $logger->records[0]['context']['url']);
+        $this->assertStringContainsString('for https://***:***@files/image.jpg?X-Amz-Signature=***&token=***', $logger->records[0]['context']['exception']);
+    }
+
     public function testExistsRemoteThrowsAfterConnectRetriesExhausted()
     {
         $url = 'https://example.com/file';

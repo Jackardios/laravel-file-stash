@@ -115,4 +115,24 @@ class UrlTest extends TestCase
             Url::sanitizeForLogging('https://user:pass@example.com:8080/path')
         );
     }
+
+    public function testSanitizeForLoggingRedactsQueryValuesAndDropsFragment(): void
+    {
+        // Parameter names stay readable for debugging; values (signatures,
+        // tokens) and bare parameters do not.
+        $this->assertSame(
+            'https://example.com/path?X-Amz-Signature=***&token=***&***&empty=***',
+            Url::sanitizeForLogging('https://example.com/path?X-Amz-Signature=abc&token=s3cr3t&bare&empty=#frag')
+        );
+        $this->assertSame('https://example.com/path', Url::sanitizeForLogging('https://example.com/path#token=abc'));
+    }
+
+    public function testRedactUrlsReplacesEveryUrlInText(): void
+    {
+        $this->assertSame(
+            'Server error: `GET https://***:***@a.test/x?sig=***` resulted in a `500` response; see http://b.test/y?id=***.',
+            Url::redactUrls('Server error: `GET https://u:p@a.test/x?sig=abc` resulted in a `500` response; see http://b.test/y?id=1.')
+        );
+        $this->assertSame('no urls here', Url::redactUrls('no urls here'));
+    }
 }
