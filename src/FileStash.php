@@ -531,7 +531,7 @@ class FileStash implements FileStashContract
                         continue;
                     }
 
-                    $result = $this->deleteEntry($info['path'], 'pruned_age');
+                    $result = $this->deleteEntry($info['path'], 'pruned_age', $this->unreadSince($info['atime']));
 
                     if ($result === DeleteResult::Skipped) {
                         $remainingFiles[] = $info;
@@ -561,7 +561,7 @@ class FileStash implements FileStashContract
                         break;
                     }
 
-                    $result = $this->deleteEntry($info['path'], 'pruned_size');
+                    $result = $this->deleteEntry($info['path'], 'pruned_size', $this->unreadSince($info['atime']));
 
                     if ($result === DeleteResult::Skipped) {
                         continue;
@@ -611,6 +611,18 @@ class FileStash implements FileStashContract
         ));
 
         return $stats;
+    }
+
+    /**
+     * Deletion guard for prune(): the decision to evict an entry was made on
+     * the atime collected before the deletion; a worker that read (touched)
+     * the entry in between makes it recently used, so it is kept.
+     *
+     * @return callable(array<string, mixed>): bool
+     */
+    protected function unreadSince(int $collectedAtime): callable
+    {
+        return static fn (array $stat): bool => is_int($stat['atime'] ?? null) && $stat['atime'] <= $collectedAtime;
     }
 
     /**

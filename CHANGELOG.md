@@ -183,6 +183,9 @@ for the full migration guide, including how to switch workers over.
   files directly inside the cache directory); they used to delete every
   file in the directory tree, including foreign files and subdirectories.
   `clear()` no longer reports orphaned temp files as evicted entries.
+- `prune()` re-checks an entry's access time under the exclusive lock
+  before evicting it: an entry read after prune collected its statistics
+  is kept instead of being evicted on stale data.
 - `getOnce()`/`batchOnce()` no longer throw after the callback succeeded
   when the cleanup cannot acquire the lifecycle lock in time: a warning is
   logged, the result is returned, and the entry is left for `prune()`.

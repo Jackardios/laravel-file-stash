@@ -31,7 +31,9 @@ use Jackardios\FileStash\Exceptions\MimeTypeIsNotAllowedException;
 use Jackardios\FileStash\FileStash;
 use Jackardios\FileStash\GenericFile;
 use Jackardios\FileStash\Support\CacheMetrics;
+use Jackardios\FileStash\Support\DeleteResult;
 use Jackardios\FileStash\Testing\FileStashFake;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\UriInterface;
@@ -449,6 +451,40 @@ class FileStashTest extends TestCase
 
         $this->assertFileDoesNotExist($this->getCachedPath('abc'));
         $this->assertFileExists($this->getCachedPath('def'));
+    }
+
+    #[DataProvider('prunePhaseProvider')]
+    public function testPruneSkipsEntriesReadAfterCollection(array $config)
+    {
+        $entry = $this->getCachedPath('https://example.com/entry');
+        $this->app['files']->put($entry, 'entry');
+        touch($entry, time() - 7200);
+
+        // A worker reads (and touches) the entry after prune collected its
+        // atime but before prune got to delete it.
+        $cache = new class(['path' => $this->cachePath, ...$config]) extends FileStash
+        {
+            protected function deleteEntry(string $path, string $evictionReason = 'pruned', ?callable $verify = null): DeleteResult
+            {
+                touch($path);
+
+                return parent::deleteEntry($path, $evictionReason, $verify);
+            }
+        };
+
+        $stats = $cache->prune();
+
+        $this->assertFileExists($entry);
+        $this->assertSame(0, $stats['deleted']);
+        $this->assertSame(1, $stats['remaining']);
+    }
+
+    public static function prunePhaseProvider(): array
+    {
+        return [
+            'age-based' => [['max_age' => 1]],
+            'size-based' => [['max_size' => 0]],
+        ];
     }
 
     public function testPruneAndClearOnlyTouchCacheEntries()
