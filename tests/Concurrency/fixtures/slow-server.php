@@ -17,6 +17,10 @@
  *                     still streamed as a decoy (redirect responses may carry
  *                     a body, and clients must ignore it)
  *   redirect_status — status for the redirect response (default 301)
+ *   no_length       — omit Content-Length (the body length is unknown upfront)
+ *
+ * When the script ends (also when the client aborted the transfer),
+ * "<path> <chunks sent>" is appended to "<SLOW_SERVER_COUNTER>.sent".
  *
  * GET /__ready answers with SLOW_SERVER_NONCE (readiness probe; not counted).
  */
@@ -56,10 +60,19 @@ if ($redirectTo !== null) {
     header('Location: '.$redirectTo);
 }
 header('Content-Type: application/octet-stream');
-header('Content-Length: '.($chunks * strlen($chunkBody)));
+if (! isset($query['no_length'])) {
+    header('Content-Length: '.($chunks * strlen($chunkBody)));
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'HEAD' || $status >= 400) {
     return;
+}
+
+$sent = 0;
+if (is_string($counterFile) && $counterFile !== '') {
+    register_shutdown_function(static function () use (&$sent, $counterFile, $path): void {
+        file_put_contents($counterFile.'.sent', "{$path} {$sent}\n", FILE_APPEND | LOCK_EX);
+    });
 }
 
 for ($i = 0; $i < $chunks; $i++) {
@@ -68,6 +81,7 @@ for ($i = 0; $i < $chunks; $i++) {
         ob_flush();
     }
     flush();
+    $sent++;
 
     if ($delayMs > 0) {
         usleep($delayMs * 1000);

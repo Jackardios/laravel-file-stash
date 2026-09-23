@@ -221,6 +221,35 @@ class FileStashTest extends TestCase
         }
     }
 
+    public function testGetRemoteTooLargeWithoutContentLength()
+    {
+        // No Content-Length: the limit can only be enforced while streaming.
+        $url = 'https://files/image.jpg';
+        $cache = $this->createCacheWithMockClient([
+            new Response(200, [], str_repeat('x', 101)),
+        ], ['max_file_size' => 100]);
+
+        try {
+            $cache->get(new GenericFile($url), $this->noop);
+            $this->fail('Expected FileIsTooLargeException to be thrown.');
+        } catch (FileIsTooLargeException $exception) {
+            $this->assertSame(100, $exception->maxBytes);
+        }
+
+        $this->assertSame([], glob($this->cachePath.'/*') ?: []);
+    }
+
+    public function testGetRemoteExactlyAtTheLimitWithoutContentLength()
+    {
+        $cache = $this->createCacheWithMockClient([
+            new Response(200, [], str_repeat('x', 100)),
+        ], ['max_file_size' => 100]);
+
+        $path = $cache->get(new GenericFile('https://files/image.jpg'));
+
+        $this->assertSame(100, filesize($path));
+    }
+
     public function testGetDiskDoesNotExist()
     {
         $file = new GenericFile('abc://files/image.jpg');
@@ -356,6 +385,30 @@ class FileStashTest extends TestCase
 
         $this->expectException(MimeTypeIsNotAllowedException::class);
         $cache->get(new GenericFile('https://files/empty.bin'), $this->noop);
+    }
+
+    public function testThrowOnLockFailsFastWhileAnotherWorkerDownloads()
+    {
+        // Cold entry, claim held: another worker is downloading it right now.
+        // The empty mock queue proves nothing is downloaded here.
+        $cache = $this->createCacheWithMockClient([], ['lock_wait_timeout' => 5]);
+        $url = 'https://files/image.jpg';
+        $claimPath = "{$this->cachePath}/.locks/".basename($this->getCachedPath($url)).'.lock';
+        $this->app['files']->makeDirectory(dirname($claimPath), 0777, true, true);
+        $claim = fopen($claimPath, 'c+');
+        $this->assertTrue(flock($claim, LOCK_EX));
+        $start = microtime(true);
+
+        try {
+            $cache->get(new GenericFile($url), $this->noop, true);
+            $this->fail('Expected FileLockedException to be thrown.');
+        } catch (FileLockedException) {
+            $this->assertLessThan(1.0, microtime(true) - $start, 'throwOnLock must not wait for the claim.');
+        } finally {
+            fclose($claim);
+        }
+
+        $this->assertFileDoesNotExist($this->getCachedPath($url));
     }
 
     public function testThrowOnLockContentionIsNotCountedAsError()

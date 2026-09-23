@@ -534,6 +534,43 @@ class FileStashFunctionMockTest extends TestCase
         $this->assertSame('remote body', $content);
     }
 
+    public function testReaderRetriesWhenTheEntryIsReplacedBeforeItsLock()
+    {
+        // A concurrent republish renames a new inode over the entry between
+        // the reader's fopen() and flock(). Without the nlink recheck the
+        // reader would hold its shared lock on the dead inode, leaving the
+        // live entry unprotected (prune could delete it mid-callback).
+        $url = 'fixtures://test-file.txt';
+        $cachedPath = $this->getCachedPath($url);
+        file_put_contents($cachedPath, 'stale');
+        $cache = $this->createCacheWithMockFixtures();
+        $replaced = false;
+
+        $flockMock = $this->getFunctionMock('Jackardios\\FileStash\\Support', 'flock');
+        $flockMock->expects($this->atLeastOnce())->willReturnCallback(
+            function ($stream, $operation, &$wouldBlock = null) use (&$replaced, $cachedPath) {
+                if (! $replaced && stream_get_meta_data($stream)['uri'] === $cachedPath) {
+                    $replaced = true;
+                    file_put_contents("{$cachedPath}.new", 'fresh');
+                    rename("{$cachedPath}.new", $cachedPath);
+                }
+
+                return \flock($stream, $operation, $wouldBlock);
+            }
+        );
+
+        $content = $cache->get(new GenericFile($url), function ($file, $path) {
+            $probe = fopen($path, 'rb');
+            $this->assertFalse(flock($probe, LOCK_EX | LOCK_NB), 'The live entry must be locked by the reader.');
+            fclose($probe);
+
+            return file_get_contents($path);
+        });
+
+        $this->assertTrue($replaced);
+        $this->assertSame('fresh', $content);
+    }
+
     public function testLifecycleLockTimeout()
     {
         $cache = $this->createCacheWithMockFixtures([
