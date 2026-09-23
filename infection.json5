@@ -1,0 +1,17 @@
+{
+    "source": {
+        "directories": ["src"]
+    },
+    "logs": {
+        "text": "build/infection/infection.log",
+        "summary": "build/infection/summary.log",
+        "github": true
+    },
+    "mutators": {
+        "@default": true
+    },
+    // The concurrency suite spawns real processes and servers: far too slow
+    // per mutant, and its code paths are covered by the fast suite.
+    "testFrameworkOptions": "--exclude-group=concurrency",
+    "timeout": 30
+}
