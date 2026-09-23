@@ -665,43 +665,44 @@ class FileStashFunctionMockTest extends TestCase
 
     public function testPruneTimeout()
     {
-        // Create several files that should be pruned by age
         for ($i = 0; $i < 5; $i++) {
             $this->files->put($this->getCachedPath("file_{$i}"), str_repeat('x', 100));
-            touch($this->getCachedPath("file_{$i}"), time() - 120); // 2 minutes old
+            touch($this->getCachedPath("file_{$i}"), time() - 120);
         }
 
-        // Mock time() to simulate timeout after a few iterations
-        $baseTime = 1000000;
-        $timeMock = $this->getFunctionMock('Jackardios\\FileStash', 'time');
-        $callCount = 0;
-        $timeMock->expects($this->atLeastOnce())->willReturnCallback(function () use (&$callCount, $baseTime) {
-            $callCount++;
-            // First 3 calls return base time (for startTime and initial checks)
-            // After that, return base time + timeout + 1 to trigger timeout
-            if ($callCount <= 3) {
-                return $baseTime;
+        // A virtual clock that advances 2 s per deleted entry: with a 1 s
+        // budget the first eviction goes through and exhausts it, whatever
+        // the number of time() calls in between.
+        $clock = time();
+        $this->getFunctionMock('Jackardios\\FileStash', 'time')
+            ->expects($this->atLeastOnce())
+            ->willReturnCallback(function () use (&$clock) {
+                return $clock;
+            });
+        $files = new class($clock) extends Filesystem
+        {
+            public function __construct(private int &$clock) {}
+
+            public function delete($paths)
+            {
+                $this->clock += 2;
+
+                return parent::delete($paths);
             }
-
-            return $baseTime + 10; // 10 seconds later, exceeds 1 second timeout
-        });
-
-        $filesystemManagerMock = $this->createStub(FilesystemManager::class);
+        };
 
         $cache = new FileStash([
             'path' => $this->cachePath,
-            'max_age' => 1, // 1 minute
-            'prune_timeout' => 1, // 1 second timeout
-        ], null, $this->files, $filesystemManagerMock);
+            'max_age' => 1,
+            'prune_timeout' => 1,
+        ], null, $files, $this->createStub(FilesystemManager::class));
 
         $stats = $cache->prune();
 
-        // Prune should report incomplete due to timeout
         $this->assertFalse($stats['completed']);
-
-        // Some files should still exist due to timeout
-        $remainingFiles = array_filter(range(0, 4), fn (int $i): bool => file_exists($this->getCachedPath("file_{$i}")));
-        $this->assertNotEmpty($remainingFiles, 'Some files should remain after prune timeout');
+        $this->assertSame(1, $stats['deleted']);
+        $this->assertSame(4, $stats['remaining']);
+        $this->assertCount(4, array_filter(range(0, 4), fn (int $i): bool => file_exists($this->getCachedPath("file_{$i}"))));
     }
 
     public function testDownloadRetriesWhenEntryLostInConversionWindow()
