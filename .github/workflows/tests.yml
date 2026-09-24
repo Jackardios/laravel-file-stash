@@ -197,6 +197,9 @@ jobs:
             os: windows-latest
             php: '8.5'
             install: ''
+            # enforceTimeLimit needs pcntl, which Windows lacks; PHPUnit
+            # reports that as a runner warning, not a test problem.
+            phpunit: '--do-not-fail-on-phpunit-warning'
           - name: PHP 8.6
             os: ubuntu-latest
             php: '8.6'
@@ -234,4 +237,4 @@ jobs:
         run: composer update --prefer-dist --no-interaction --no-progress ${{ matrix.install }}
 
       - name: Tests
-        run: php vendor/bin/phpunit --display-deprecations
+        run: php vendor/bin/phpunit --display-deprecations ${{ matrix.phpunit }}
