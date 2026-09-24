@@ -22,7 +22,9 @@ jobs:
       matrix:
         php: ['8.3', '8.4', '8.5']
         laravel: ['^12.61.1', '^13.12']
-        guzzle: ['']
+        # Pinned explicitly: Laravel 13 accepts both majors and would
+        # otherwise always resolve Guzzle 8.
+        guzzle: ['^7.15.2']
         include:
           # Guzzle 8 needs Laravel 13 (Laravel 12 requires Guzzle 7).
           - php: '8.3'
@@ -32,7 +34,7 @@ jobs:
             laravel: '^13.12'
             guzzle: '^8.0.1'
 
-    name: PHP ${{ matrix.php }} - Laravel ${{ matrix.laravel }}${{ matrix.guzzle && format(' - Guzzle {0}', matrix.guzzle) || '' }}
+    name: PHP ${{ matrix.php }} - Laravel ${{ matrix.laravel }} - Guzzle ${{ matrix.guzzle }}
 
     steps:
       - name: Checkout
@@ -60,9 +62,7 @@ jobs:
       - name: Install dependencies
         run: |
           composer require --dev --no-update "laravel/framework:${{ matrix.laravel }}"
-          if [ -n "${{ matrix.guzzle }}" ]; then
-            composer require --no-update "guzzlehttp/guzzle:${{ matrix.guzzle }}"
-          fi
+          composer require --no-update "guzzlehttp/guzzle:${{ matrix.guzzle }}"
           composer update --prefer-dist --no-interaction --no-progress
 
       - name: Installed versions
@@ -161,7 +161,8 @@ jobs:
           php-version: '8.4'
           extensions: curl, fileinfo, mbstring, pcntl, posix
           coverage: pcov
-          tools: infection:0.35.4
+          # Checksum of the GPG-verified 0.35.4 release phar.
+          tools: infection:0.35.4@sha256:24e9d2ab5fc5613be6b9fea99cfd2c689234d6e6053f339b8f5e05136246070a
 
       - name: Install dependencies
         run: composer update --prefer-dist --no-interaction --no-progress
