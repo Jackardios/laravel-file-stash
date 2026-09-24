@@ -328,6 +328,8 @@ FileStash::metrics(): CacheMetrics            // Get hit/miss/eviction counters
 
 `exists()` returns `false` only for a definitive answer — a 4xx other than 429, or a redirect it did not follow to a document. A 429, a 5xx, or a network error (after `http_retries`) throws (`FailedToRetrieveFileException` with `statusCode`, or the Guzzle exception): it says nothing about whether the file exists.
 
+With a `mime_types` whitelist, `exists()` checks the type the source reports (the `Content-Type` header, or the disk's type, which may be guessed from the file extension), while `get()` checks the downloaded content. A file `exists()` accepted can still be rejected by `get()`, for example a `.csv` whose content is detected as `text/plain`.
+
 ---
 
 ## Pruning
@@ -459,7 +461,7 @@ php artisan vendor:publish --tag=file-stash-config
 | Key | Env | Default | Description |
 |---|---|---|---|
 | `timeout` | `FILE_STASH_TIMEOUT` | `300` | Total request timeout (seconds, `-1` = unlimited) |
-| `connect_timeout` | `FILE_STASH_CONNECT_TIMEOUT` | `30` | Connection timeout (seconds) |
+| `connect_timeout` | `FILE_STASH_CONNECT_TIMEOUT` | `30` | Connection timeout (seconds); `-1`/`0` = curl's built-in 300 s |
 | `read_timeout` | `FILE_STASH_READ_TIMEOUT` | `30` | Stall timeout (seconds, see below) |
 | `http_retries` | `FILE_STASH_HTTP_RETRIES` | `0` | Retry attempts (4xx except 429 not retried) |
 | `http_retry_delay` | `FILE_STASH_HTTP_RETRY_DELAY` | `100` | Base delay in ms (exponential backoff) |
@@ -519,7 +521,7 @@ IPv6 literals — in URLs and in `allowed_hosts` — are canonicalized before co
 | Key | Env | Default | Description |
 |---|---|---|---|
 | `prune_interval` | `FILE_STASH_PRUNE_INTERVAL` | `*/5 * * * *` | Cron schedule for auto-pruning (`null` disables it; an invalid expression is reported and the task skipped) |
-| `prune_timeout` | `FILE_STASH_PRUNE_TIMEOUT` | `300` | Prune timeout (seconds) |
+| `prune_timeout` | `FILE_STASH_PRUNE_TIMEOUT` | `300` | Prune timeout (seconds); `-1`/`0` = no timeout |
 
 ### Performance
 

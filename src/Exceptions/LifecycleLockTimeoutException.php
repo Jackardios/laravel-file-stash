@@ -6,10 +6,11 @@ use RuntimeException;
 use Throwable;
 
 /**
- * The lifecycle lock could not be acquired within `lifecycle_lock_timeout`.
+ * The lifecycle or pin lock could not be acquired within
+ * `lifecycle_lock_timeout`.
  *
- * Extends RuntimeException for backwards compatibility with v5.0 code that
- * caught the generic lock timeout.
+ * Extends RuntimeException, which v4 threw for lock timeouts, so existing
+ * catch blocks keep working.
  */
 class LifecycleLockTimeoutException extends RuntimeException
 {

@@ -60,6 +60,13 @@ Values that used to be accepted and now throw:
 | A timeout between `-1` and `0` (e.g. `-0.5`) | meant "unlimited" | throws; use `-1` |
 | A fractional value for an integer option (`max_age => 1.5`) | truncated | throws |
 | `NAN` or `INF` for a timeout | accepted | throws |
+| Negative `http_retries`, `http_retry_delay`, `max_redirects`, `touch_interval` | clamped to `0` | throws; use `0` |
+| A boolean or non-numeric string for an integer option | cast to `1`/`0` | throws |
+| `events_enabled` as a string other than `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`, `''` | any non-empty string enabled events | throws |
+
+One value changes meaning without throwing: `events_enabled => 'false'` (a
+string, e.g. from a config file that bypasses `env()`) enabled events in v4
+and disables them in v5.
 
 ### 4. Update your code
 
@@ -116,6 +123,10 @@ remains a deprecated alias until v6. The package schedules the command
 itself (`prune_interval`); if you scheduled the old name by hand, switch to
 the new one or remove your entry. The `command.file-stash.prune` container
 binding no longer exists.
+
+**Subclasses.** v5 reorganized the protected methods of `FileStash`: 34 of
+v4's no longer exist (HTTP handling moved to `Http\RemoteFetcher`, helpers
+to `Support\`). Review any subclass that overrides or calls them.
 
 **Container.** `app(FileStash::class)` and the contract resolve to the
 `file-stash` singleton; v4 built a second instance for the class name.

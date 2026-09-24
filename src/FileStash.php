@@ -1534,7 +1534,7 @@ class FileStash implements FileStashContract
             }
 
             $maxBytes = $this->config['max_file_size'];
-            $this->copyStreamWithSizeLimit($source, $target, $maxBytes, $maxBytes < 0);
+            $this->copyStreamWithSizeLimit($source, $target, $maxBytes);
 
             // A failed flush means part of the payload never reached the
             // file (e.g. ENOSPC) — the copy must not pass as complete.
@@ -1553,14 +1553,16 @@ class FileStash implements FileStashContract
      *
      * @param  resource  $source
      * @param  resource  $target
-     * @param  string  $errorContext  Additional context for error messages
+     * @param  int  $maxBytes  -1 = unlimited
      *
      * @throws SourceResourceIsInvalidException
      * @throws FileIsTooLargeException
      * @throws SourceResourceTimedOutException
      */
-    protected function copyStreamWithSizeLimit($source, $target, int $maxBytes, bool $isUnlimitedSize, string $errorContext = ''): void
+    protected function copyStreamWithSizeLimit($source, $target, int $maxBytes): void
     {
+        $isUnlimitedSize = $maxBytes < 0;
+
         $readTimeout = $this->config['read_timeout'];
         if ($readTimeout >= 0) {
             $seconds = (int) floor($readTimeout);
@@ -1583,11 +1585,7 @@ class FileStash implements FileStashContract
             if (($metadata['timed_out'] ?? false) === true) {
                 throw SourceResourceTimedOutException::create();
             }
-            $message = 'Failed to copy stream data';
-            if ($errorContext) {
-                $message .= " {$errorContext}";
-            }
-            throw SourceResourceIsInvalidException::create($message);
+            throw SourceResourceIsInvalidException::create('Failed to copy stream data');
         }
 
         if (! $isUnlimitedSize && $bytes > $maxBytes) {
@@ -1609,11 +1607,7 @@ class FileStash implements FileStashContract
         if (($limit < 0 || $bytes < $limit) && ! feof($source)) {
             $probe = fread($source, 1);
             if ($probe === false || $probe !== '') {
-                $message = 'Source stream ended before EOF';
-                if ($errorContext) {
-                    $message .= " {$errorContext}";
-                }
-                throw SourceResourceIsInvalidException::create($message);
+                throw SourceResourceIsInvalidException::create('Source stream ended before EOF');
             }
         }
     }

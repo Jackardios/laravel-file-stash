@@ -40,14 +40,15 @@ return [
     /*
      | Total timeout for downloading a remote file in seconds.
      | If loading the file takes longer than this, it will fail.
-     | Set to -1 to wait indefinitely.
+     | Set to -1 (or 0) to wait indefinitely.
      | Default: 300 seconds (5 minutes)
      */
     'timeout' => env('FILE_STASH_TIMEOUT', 300),
 
     /*
      | Timeout to initiate a connection to load a remote file in seconds.
-     | If it takes longer, it will fail. Set to -1 to wait indefinitely.
+     | If it takes longer, it will fail. -1 (or 0) leaves the limit to
+     | curl's built-in connect timeout of 300 seconds.
      | Default: 30 seconds
      */
     'connect_timeout' => env('FILE_STASH_CONNECT_TIMEOUT', 30.0),
@@ -71,7 +72,7 @@ return [
     /*
      | Timeout for the prune operation in seconds.
      | If pruning takes longer than this, it will stop early.
-     | Set to -1 for no timeout.
+     | Set to -1 (or 0) for no timeout.
      | Default: 300 seconds (5 minutes)
      */
     'prune_timeout' => env('FILE_STASH_PRUNE_TIMEOUT', 300),

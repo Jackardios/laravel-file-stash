@@ -123,8 +123,12 @@ interface FileStash
      * — not whether it is currently cached.
      *
      * Remote files are checked with an HTTP HEAD request; disk files via the
-     * storage disk. The check also fails (throws) when the source file would
-     * be rejected by the MIME type whitelist or the size limit.
+     * storage disk. The check also fails (throws) when the source reports a
+     * MIME type outside the whitelist or a size above the limit. The MIME
+     * type is what the source reports (the Content-Type header, or the
+     * disk's type, which may be guessed from the extension), while get()
+     * checks the downloaded content, so get() can still reject a file that
+     * exists() accepted.
      *
      * For remote files only a definitive answer returns false: a 4xx other
      * than 429, or a redirect that was not followed to a document. Rate
