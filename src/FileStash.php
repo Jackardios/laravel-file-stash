@@ -535,7 +535,7 @@ class FileStash implements FileStashContract
                     // are garbage-collected separately and never counted.
                     if (preg_match(self::TEMP_FILE_PATTERN, $file->getBasename()) === 1) {
                         $tempFiles[] = [
-                            'path' => $file->getPathname(),
+                            'path' => $this->pathOf($file),
                             'mtime' => $file->getMTime(),
                         ];
 
@@ -543,7 +543,7 @@ class FileStash implements FileStashContract
                     }
 
                     $fileInfos[] = [
-                        'path' => $file->getPathname(),
+                        'path' => $this->pathOf($file),
                         'atime' => $file->getATime(),
                         'size' => $file->getSize(),
                     ];
@@ -769,9 +769,9 @@ class FileStash implements FileStashContract
                 // downloads: temp files are orphans of crashed writers (no
                 // eviction events for them), and all claim files are idle.
                 if (preg_match(self::TEMP_FILE_PATTERN, $file->getBasename()) === 1) {
-                    $this->unlinkLocked($file->getPathname());
+                    $this->unlinkLocked($this->pathOf($file));
                 } else {
-                    $this->deleteEntry($file->getPathname(), 'cleared');
+                    $this->deleteEntry($this->pathOf($file), 'cleared');
                 }
             }
 
@@ -797,6 +797,16 @@ class FileStash implements FileStashContract
             ->name(self::ENTRY_FILE_PATTERN)
             ->name(self::TEMP_FILE_PATTERN)
             ->in($this->config['path']);
+    }
+
+    /**
+     * The path of a file findCacheFiles() returned, spelled like
+     * getCachedPath() spells it: Finder joins with DIRECTORY_SEPARATOR, which
+     * would hand eviction events a different path on Windows.
+     */
+    protected function pathOf(SplFileInfo $file): string
+    {
+        return "{$this->config['path']}/{$file->getFilename()}";
     }
 
     /**
