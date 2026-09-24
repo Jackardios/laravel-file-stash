@@ -54,7 +54,7 @@ In all these cases, `Storage::get()` returns file contents as a string (loaded i
 ```
                           ┌───────────────────────────────┐
                           │        File Stash Cache       │
-                          │   /storage/cache/files/       │
+                          │ storage/framework/cache/files │
                           │                               │
   ┌─────────────┐  get()  │  ┌─────────┐   File exists?   │
   │  Worker 1   │────────►│  │ SHA-256 │─ yes ► LOCK_SH ──► read ──► callback
@@ -165,7 +165,7 @@ FileStash::getOnce($invoice, function ($file, $path) {
 // Cached file is automatically removed from disk
 ```
 
-> **Note:** the cache entry is shared by URL across all workers. `getOnce()`/`batchOnce()` delete that shared entry after the callback — if other workers use `get()` on the same URL, you are evicting their warm cache and forcing a re-download. Deletion is best effort and never waits for other workers' callbacks: it is skipped for files another worker is reading at that moment, and while a chunked batch of another worker runs it waits for the pin lock at most `lifecycle_lock_timeout`, then logs a warning — either way the callback result is still returned and the entry is left for `prune()`.
+> **Note:** the cache entry is shared by URL across all workers. `getOnce()`/`batchOnce()` delete that shared entry after the callback — if other workers use `get()` on the same URL, you are evicting their warm cache and forcing a re-download. Deletion is best effort: it skips a file another worker is reading at that moment instead of waiting for it. Only a chunked batch of another worker makes it wait, for the pin lock and at most `lifecycle_lock_timeout`, before it logs a warning. Either way the callback result is still returned and the entry is left for `prune()`.
 
 ---
 
@@ -250,7 +250,7 @@ Pruner  ─── prune()          ──► tries LOCK_EX on file ──► ski
 
 While your callback runs, each cached file is held with a shared lock (`LOCK_SH`). The pruner tries to acquire an exclusive lock (`LOCK_EX`) before deleting — if it can't, it skips the file.
 
-> **Chunked batches.** When a batch contains more files than `batch_chunk_size` (default 100), files are retrieved chunk by chunk and their shared locks are released after each chunk (this prevents file descriptor exhaustion). Instead, a chunked batch holds a shared **pin lock** (`.pin.lock` in the cache directory) from the first chunk until the callback returns: while any chunked batch runs, `prune()` evicts nothing (it reports `completed => false` and catches up on its next run), and `forget()` and the `getOnce()`/`batchOnce()` cleanup of other workers wait for it (at most `lifecycle_lock_timeout`). `clear()` is excluded by the lifecycle lock as usual. Keep chunked batches short — a batch that runs for hours postpones eviction for as long.
+> **Chunked batches.** When a batch contains more files than `batch_chunk_size` (default 100), files are retrieved chunk by chunk and their shared locks are released after each chunk (this prevents file descriptor exhaustion). Instead, a chunked batch holds a shared **pin lock** (`.pin.lock` in the cache directory) from the first chunk until the callback returns: while any chunked batch runs, `prune()` evicts nothing (if it has something to evict, it reports `completed => false` and catches up on its next run), and `forget()` and the `getOnce()`/`batchOnce()` cleanup of other workers wait for it (at most `lifecycle_lock_timeout`). `clear()` is excluded by the lifecycle lock as usual. Keep chunked batches short — a batch that runs for hours postpones eviction for as long.
 
 `clear()` goes further — it acquires an exclusive lifecycle lock, so it waits until all `batch()`/`get()` operations finish before deleting anything.
 
@@ -258,14 +258,14 @@ While your callback runs, each cached file is held with a shared lock (`LOCK_SH`
 
 Cache calls may be nested (e.g. `get()` inside a `batch()` callback) — the lifecycle lock is reentrant within a process. Two rules apply:
 
-- `forget()`, `getOnce()`, or `batchOnce()` inside a `batch()`/`batchOnce()` callback: the entry may still be in use by the callback, so the deletion is **deferred** — the entry stays on disk for the whole callback and is deleted right after the outermost batch releases its shared lifecycle lock. `forget()` returns `true` in that case, meaning "scheduled for deletion". Note the flush happens once per outermost batch: if a later chunk of the same batch re-downloads a forgotten entry, the flush removes the fresh copy too.
-- `clear()` inside a `batch()`/`batchOnce()` callback throws a `LogicException` immediately instead of deadlocking.
+- `forget()`, `getOnce()`, or `batchOnce()` inside a callback of `get()`, `getOnce()`, `batch()` or `batchOnce()`: the entry may still be in use by the callback, so the deletion is **deferred** — the entry stays on disk for the whole callback and is deleted right after the outermost call releases its shared lifecycle lock. `forget()` returns `true` in that case, meaning "scheduled for deletion". A `get()` of the same URL later in the callback is served from the entry that is still on disk; the deletion still happens afterwards.
+- `clear()` inside such a callback throws a `LogicException` immediately instead of deadlocking.
 
 ### Lock configuration
 
 ```php
 // config/file-stash.php
-'lock_max_attempts'      => 3,    // retries before giving up
+'lock_max_attempts'      => 3,    // attempts before giving up
 'lock_wait_timeout'      => -1,   // seconds to wait (-1 = forever)
 'lifecycle_lock_timeout' => 30,   // seconds for batch/clear coordination
 ```
@@ -304,16 +304,16 @@ Lock files created by another user without write permission for you are opened r
 
 ```php
 // Cache and use a file
-FileStash::get(File $file, ?callable $callback, bool $throwOnLock = false): mixed
+FileStash::get(File $file, ?callable $callback = null, bool $throwOnLock = false): mixed
 
 // Cache, use, then delete
-FileStash::getOnce(File $file, ?callable $callback, bool $throwOnLock = false): mixed
+FileStash::getOnce(File $file, ?callable $callback = null, bool $throwOnLock = false): mixed
 
 // Cache and use multiple files (prune-safe)
-FileStash::batch(array $files, ?callable $callback, bool $throwOnLock = false): mixed
+FileStash::batch(array $files, ?callable $callback = null, bool $throwOnLock = false): mixed
 
 // Cache, use, then delete multiple files
-FileStash::batchOnce(array $files, ?callable $callback, bool $throwOnLock = false): mixed
+FileStash::batchOnce(array $files, ?callable $callback = null, bool $throwOnLock = false): mixed
 ```
 
 ### Cache Management
@@ -398,7 +398,7 @@ Enable event dispatching for observability:
 
 All events are in the `Jackardios\FileStash\Events` namespace.
 
-When `events_enabled` is `false` (default), zero overhead — no objects allocated, no dispatching.
+When `events_enabled` is `false` (default), nothing is dispatched and the event dispatcher is never resolved.
 
 ```php
 use Jackardios\FileStash\Events\CacheHit;
@@ -441,7 +441,7 @@ app()->terminating(function () {
 
 ## Configuration
 
-All settings support environment variables. Publish the config to customize:
+Most settings can be set through environment variables (`path` and `mime_types` only in the config file). Publish the config to customize:
 
 ```bash
 php artisan vendor:publish --tag=file-stash-config
@@ -454,7 +454,7 @@ php artisan vendor:publish --tag=file-stash-config
 | `path` | — | `storage/framework/cache/files` | Cache directory |
 | `max_file_size` | `FILE_STASH_MAX_FILE_SIZE` | `-1` (unlimited) | Max file size in bytes |
 | `max_age` | `FILE_STASH_MAX_AGE` | `60` | TTL in minutes before pruning |
-| `max_size` | `FILE_STASH_MAX_SIZE` | `1E+9` (1 GB) | Soft limit for total cache size |
+| `max_size` | `FILE_STASH_MAX_SIZE` | `1000000000` (1 GB) | Soft limit for total cache size |
 
 ### HTTP
 
@@ -472,7 +472,7 @@ php artisan vendor:publish --tag=file-stash-config
 
 ### Security
 
-> **⚠️ SSRF protection is OFF by default.** If URLs come from user input, configure `allowed_hosts` and/or enable `block_private_hosts` — otherwise users can make your workers fetch internal endpoints (cloud metadata services, private APIs, etc.). Restrict `allowed_disks` as well: a `disk://path` URL reads from **any** configured storage disk by default (`local://.env`, a private S3 bucket, …).
+> **⚠️ SSRF protection is OFF by default.** If URLs come from user input, configure `allowed_hosts` and/or enable `block_private_hosts` — otherwise users can make your workers fetch internal endpoints (cloud metadata services, private APIs, etc.). Restrict `allowed_disks` as well: a `disk://path` URL reads from **any** configured storage disk by default (every file on the `local` disk, a private S3 bucket, …).
 
 | Key | Env | Default | Description |
 |---|---|---|---|
@@ -540,13 +540,13 @@ All exceptions are in `Jackardios\FileStash\Exceptions` with `public readonly` p
 |---|---|---|
 | `FileIsTooLargeException` | File exceeds `max_file_size` | `int $maxBytes` |
 | `FileLockedException` | File locked, `throwOnLock` is `true` | — |
-| `HostNotAllowedException` | Host not in `allowed_hosts` | `string $host` |
+| `HostNotAllowedException` | Host not in `allowed_hosts`, or a private address with `block_private_hosts` | `string $host` |
 | `DiskNotAllowedException` | Disk not in `allowed_disks` (extends `HostNotAllowedException`) | `string $disk` (also in `$host`) |
 | `MimeTypeIsNotAllowedException` | MIME type not allowed | `string $mimeType` |
 | `InvalidConfigurationException` | Invalid config value | `string $key`, `string $reason` |
 | `SourceResourceIsInvalidException` | Invalid stream resource | — |
 | `SourceResourceTimedOutException` | Storage-disk stream read timed out | — |
-| `FailedToRetrieveFileException` | All retries exhausted | `int $statusCode` (`0` if not HTTP) |
+| `FailedToRetrieveFileException` | Download failed (non-2xx after `http_retries`, network error, `lock_max_attempts` used up, temp file could not be written or published) | `int $statusCode` (`0` if not HTTP) |
 | `LifecycleLockTimeoutException` | Lifecycle or pin lock not acquired within `lifecycle_lock_timeout` (extends `RuntimeException`; `forget()` catches it and returns `false`) | — |
 
 ```php

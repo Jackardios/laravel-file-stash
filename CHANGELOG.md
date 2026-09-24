@@ -11,7 +11,7 @@ steps, including how to switch workers over.
 ### Breaking: requirements
 
 - PHP `^8.3` (was `^8.1`); CI covers PHP 8.3–8.5.
-- Laravel `^12 || ^13` (was `^10 || ^11 || ^12`). Laravel 11 left its
+- Laravel `^12.61.1 || ^13.12` (was `^10 || ^11 || ^12`). Laravel 11 left its
   security-fix window before this release and every 11.x version is affected
   by known security advisories, so it is not supported.
 - Dependency floors are the oldest versions without known security
@@ -37,8 +37,9 @@ steps, including how to switch workers over.
 - The downloaded payload is `fsync()`ed before the publishing `rename()`,
   so a power loss cannot leave a zero-length or truncated file under the
   published name.
-- Zero-byte entries are valid and served as-is — except under a MIME
-  whitelist, which always rejects empty files (deny-by-default).
+- Zero-byte entries are valid and served as-is. Under a MIME whitelist
+  they are detected as `application/x-empty` and rejected unless that type
+  is listed.
 - If a writer crashes mid-download, the kernel releases its locks and the
   next worker takes over; no manual intervention needed.
 - Crashed writers' temp files are cleaned up by `prune()`; deletions verify
@@ -54,12 +55,11 @@ steps, including how to switch workers over.
   running batch uses: entries another worker reads are skipped, chunked
   batches are waited for through the pin lock (at most
   `lifecycle_lock_timeout`), and unrelated work is never waited for. Inside
-  a `batch()`/`batchOnce()` callback the deletion is **deferred**: the entry
-  survives the whole callback and is deleted right after the outermost
-  batch releases its shared lock (`forget()` returns `true` = "deleted or
-  scheduled"; eviction events/metrics fire at flush time; a failed flush is
-  logged). If a later chunk of the same batch re-downloads a forgotten
-  entry, the flush removes the fresh copy too.
+  a `get()`/`getOnce()`/`batch()`/`batchOnce()` callback the deletion is
+  **deferred**: the entry survives the whole callback and is deleted right
+  after the outermost call releases its shared lock (`forget()` returns
+  `true` = "deleted or scheduled"; eviction events/metrics fire at flush
+  time; a failed flush is logged).
 - Lifecycle- and pin-lock acquisition timeouts throw the new
   `LifecycleLockTimeoutException` (extends `RuntimeException`, so existing
   catch blocks keep working). `forget()` catches it, logs a warning and
@@ -77,8 +77,8 @@ steps, including how to switch workers over.
   2^53 or overflowed; fractions and out-of-range values are rejected. Float
   options reject `NAN` and infinities.
 - `path` is required and must be absolute (the Laravel config still defaults
-  it to `storage/framework/cache/files`); standalone construction requires
-  passing it explicitly.
+  it to `storage/framework/cache/files`). `new FileStash([...])` uses only
+  the array it is given; v4 merged `config('file-stash')` underneath it.
 - `timeout` default changed from `-1` (unlimited) to `300` seconds.
 - `user_agent` default changed to `Laravel-FileStash/5.x`.
 - `prune_interval => null` disables the scheduled prune.
@@ -118,8 +118,8 @@ steps, including how to switch workers over.
   the transfer stalls below 1 byte/s for that long). HTTP timeouts surface
   as Guzzle exceptions and participate in `http_retries`;
   `SourceResourceTimedOutException` is now only thrown for storage-disk
-  streams. `read_timeout => 0` means no stall limit, like `-1` (storage-disk
-  streams used to time out immediately).
+  streams. `read_timeout => 0` means no stall limit, like `-1` (it used to
+  set a zero stream timeout that broke reads from network-backed disks).
 - Responses stream directly to the temp file with an on-the-fly size limit —
   oversized downloads abort mid-transfer instead of buffering the whole body.
 - HTTP retries restart from a truncated file (previously a retry after a
@@ -217,8 +217,8 @@ steps, including how to switch workers over.
 - `prune()` no longer evicts entries a running chunked batch is using:
   chunked batches release their per-file locks before the callback and
   now hold a shared pin lock instead, which `prune()` must take
-  exclusively for each eviction (it reports `completed => false` while a
-  chunked batch runs).
+  exclusively for each eviction (if it has something to evict while a
+  chunked batch runs, it reports `completed => false`).
 - `prune()` re-checks an entry's access time under the exclusive lock
   before evicting it: an entry read after prune collected its statistics
   is kept instead of being evicted on stale data.

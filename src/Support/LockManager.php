@@ -146,8 +146,9 @@ final class LockManager
             flock($stream, LOCK_UN);
             fclose($stream);
 
-            // Hooks run AFTER the flocks are gone, so a hook may take a real
-            // exclusive lifecycle lock (e.g. to flush deferred deletions).
+            // Hooks run AFTER the flocks are gone, so a hook may take locks
+            // this frame would have blocked (e.g. the pin lock to flush
+            // deferred deletions).
             self::drainReleaseHooks($lockPath);
         }
     }

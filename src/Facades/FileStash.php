@@ -16,7 +16,7 @@ use Jackardios\FileStash\Testing\FileStashFake;
  * @method static void clear()
  * @method static \Jackardios\FileStash\Support\CacheMetrics metrics()
  *
- * @see \Jackardios\FileStash\FileStash;
+ * @see \Jackardios\FileStash\FileStash
  */
 class FileStash extends Facade
 {

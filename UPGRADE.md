@@ -61,12 +61,25 @@ Values that used to be accepted and now throw:
 | A fractional value for an integer option (`max_age => 1.5`) | truncated | throws |
 | `NAN` or `INF` for a timeout | accepted | throws |
 | Negative `http_retries`, `http_retry_delay`, `max_redirects`, `touch_interval` | clamped to `0` | throws; use `0` |
-| A boolean or non-numeric string for an integer option | cast to `1`/`0` | throws |
-| `events_enabled` as a string other than `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`, `''` | any non-empty string enabled events | throws |
+| A boolean for an integer option | cast to `1`/`0` | throws |
+| `events_enabled` as a string other than `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`, `''` | any non-empty string except `'0'` enabled events | throws |
+| A relative or empty `path` | accepted | throws; use an absolute path |
+| An empty or non-string `user_agent`, or one with control characters | accepted (non-strings cast) | throws |
+| Non-string entries in `mime_types` | cast to strings | throws |
+| A scalar other than a string for `allowed_hosts` (e.g. `true`, `5`) | cast to a one-host list | throws |
 
-One value changes meaning without throwing: `events_enabled => 'false'` (a
-string, e.g. from a config file that bypasses `env()`) enabled events in v4
-and disables them in v5.
+Some values change meaning without throwing:
+
+- `events_enabled => 'false'`, `'no'` or `'off'` (strings, e.g. from a
+  config file that bypasses `env()`) enabled events in v4 and disable them
+  in v5.
+- `prune_interval => null` fell back to `*/5 * * * *` in v4 and disables
+  the scheduled prune in v5. An empty string (`FILE_STASH_PRUNE_INTERVAL=`)
+  also fell back in v4; v5 reports it as an invalid expression and skips
+  the task.
+- `read_timeout => 0` set a zero stream timeout on storage-disk streams in
+  v4, which breaks reads from network-backed disks such as S3; in v5 it
+  means no stall limit, like `-1`.
 
 ### 4. Update your code
 
@@ -143,14 +156,17 @@ directory at the same time: a v5 reader could serve a file that a v4 writer
 has only just created, and v4's `clear()` and `prune()` do not see v5's
 locks. Either:
 
-- stop all v4 workers, delete the cache directory, and start the v5 workers:
+- stop all v4 workers, empty the cache directory, and start the v5
+  workers. Delete the directory, or run `clear()` once with v5:
 
   ```bash
   rm -rf storage/framework/cache/files   # or your configured path
+  php artisan tinker --execute 'app("file-stash")->clear();'   # or this
   ```
 
-  Delete the directory rather than running `clear()`: v4 may have left
-  zero-length files behind, which v5 serves as valid empty entries.
+  Do not skip this step: v4 wrote downloads directly under the entry's
+  name, so a killed v4 worker can leave an empty or truncated file behind,
+  which v5 would serve as a complete entry.
 
 - or point v5 at a new `path` and delete the old directory once the last v4
   worker is gone.
@@ -161,7 +177,7 @@ v4 kept its lifecycle lock in the system temp directory.
 
 If web and queue workers run as different users, see
 [Sharing the cache between users](README.md#sharing-the-cache-between-users):
-v5 creates files with the process umask applied instead of fixed modes.
+v5 creates directories with `0777` minus the umask instead of a fixed `0755`.
 
 ### 6. Optional: harden the sources
 

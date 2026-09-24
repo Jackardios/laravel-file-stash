@@ -84,8 +84,9 @@ return [
      |
      | Comparison is case-insensitive and ignores parameters ("text/plain;
      | charset=utf-8" matches 'text/plain'). Files whose type cannot be
-     | detected — including empty files — are always rejected when a
-     | whitelist is configured (deny by default).
+     | detected are rejected when a whitelist is configured (deny by
+     | default). Empty files are detected as 'application/x-empty' and are
+     | rejected unless that type is listed.
      */
     'mime_types' => [],
 
@@ -116,7 +117,7 @@ return [
      |   - array/comma-separated string => only the listed disks
      |
      | If file URLs come from user input, list only the disks meant for it:
-     | otherwise a URL like `local://.env` reads any configured disk.
+     | otherwise a `disk://path` URL can read any file on any configured disk.
      | Default: null (all disks allowed)
      */
     'allowed_disks' => env('FILE_STASH_ALLOWED_DISKS', null),
@@ -125,8 +126,8 @@ return [
      | Block requests to private and other special-purpose addresses (SSRF
      | protection). IP literals from the reserved IPv4/IPv6 ranges are
      | rejected — private, loopback, link-local, CGNAT (cloud metadata),
-     | benchmarking, TEST-NETs, multicast, NAT64, Teredo, 6to4, ULA, and
-     | v4-mapped IPv6. Hostnames are resolved via DNS and the hosts file
+     | benchmarking, TEST-NETs, multicast, NAT64, Teredo, 6to4 and ULA;
+     | v4-mapped IPv6 addresses are checked by the IPv4 rules. Hostnames are resolved via DNS and the hosts file
      | (A and AAAA records; all resolved addresses are checked), and hosts
      | that resolve to nothing are rejected. Redirect targets are validated
      | as well. Note: this cannot protect against DNS rebinding, because
@@ -188,7 +189,8 @@ return [
 
     /*
      | Enable dispatching of cache events (CacheHit, CacheMiss, etc.).
-     | When disabled, no events are dispatched (zero overhead).
+     | When disabled, no events are dispatched and the event dispatcher is
+     | never resolved.
      | Default: false
      */
     'events_enabled' => env('FILE_STASH_EVENTS_ENABLED', false),
