@@ -635,6 +635,10 @@ class FileStashTest extends TestCase
 
     public function testCreatedFilesAndDirectoriesRespectUmask()
     {
+        if (PHP_OS_FAMILY === 'Windows') {
+            $this->markTestSkipped('Windows has no umask-controlled file modes.');
+        }
+
         // A group-writable umask plus a setgid directory is how the web
         // server and queue workers of different users share one cache.
         $previous = umask(0002);

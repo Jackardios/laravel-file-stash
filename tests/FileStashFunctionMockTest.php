@@ -534,6 +534,12 @@ class FileStashFunctionMockTest extends TestCase
 
     public function testReaderRetriesWhenTheEntryIsReplacedBeforeItsLock()
     {
+        if (PHP_OS_FAMILY === 'Windows') {
+            // Known limitation: NTFS keeps a replaced file's nlink at 1 while
+            // it is open, so the recheck cannot fire there.
+            $this->markTestSkipped('Replacement detection relies on POSIX nlink semantics.');
+        }
+
         // A concurrent republish renames a new inode over the entry between
         // the reader's fopen() and flock(). Without the nlink recheck the
         // reader would hold its shared lock on the dead inode, leaving the
