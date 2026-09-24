@@ -2767,6 +2767,14 @@ class FileStashTest extends TestCase
         $this->assertArrayNotHasKey('curl', $options);
     }
 
+    public function testZeroReadTimeoutDisablesTheCurlStallAbort()
+    {
+        $options = $this->captureRequestOptions(['read_timeout' => 0]);
+
+        // Like the other timeouts, 0 means no limit, not a 1-second stall abort
+        $this->assertArrayNotHasKey('curl', $options);
+    }
+
     // =========================================================================
     // SSRF Redirect Protection Tests
     // =========================================================================

@@ -18,6 +18,7 @@ use Jackardios\FileStash\GenericFile;
 use phpmock\phpunit\PHPMock;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
+use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -145,13 +146,15 @@ class FileStashFunctionMockTest extends TestCase
         return "{$this->cachePath}/".hash('sha256', $url);
     }
 
-    public function testGetWithUnlimitedReadTimeoutDoesNotForceZeroSecondStreamTimeout()
+    #[TestWith([-1])]
+    #[TestWith([0])]
+    public function testGetWithUnlimitedReadTimeoutDoesNotForceZeroSecondStreamTimeout(int $readTimeout)
     {
         $url = 'fixtures://test-file.txt';
         $file = new GenericFile($url);
         $cachedPath = $this->getCachedPath($url);
 
-        $cache = $this->createCacheWithMockFixtures(['read_timeout' => -1]);
+        $cache = $this->createCacheWithMockFixtures(['read_timeout' => $readTimeout]);
 
         $streamSetTimeoutMock = $this->getFunctionMock('Jackardios\\FileStash', 'stream_set_timeout');
         $streamSetTimeoutMock->expects($this->never());

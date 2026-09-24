@@ -460,9 +460,9 @@ php artisan vendor:publish --tag=file-stash-config
 
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `timeout` | `FILE_STASH_TIMEOUT` | `300` | Total request timeout (seconds, `-1` = unlimited) |
+| `timeout` | `FILE_STASH_TIMEOUT` | `300` | Total request timeout (seconds, `-1`/`0` = unlimited) |
 | `connect_timeout` | `FILE_STASH_CONNECT_TIMEOUT` | `30` | Connection timeout (seconds); `-1`/`0` = curl's built-in 300 s |
-| `read_timeout` | `FILE_STASH_READ_TIMEOUT` | `30` | Stall timeout (seconds, see below) |
+| `read_timeout` | `FILE_STASH_READ_TIMEOUT` | `30` | Stall timeout (seconds, see below; `-1`/`0` = unlimited) |
 | `http_retries` | `FILE_STASH_HTTP_RETRIES` | `0` | Retry attempts (4xx except 429 not retried) |
 | `http_retry_delay` | `FILE_STASH_HTTP_RETRY_DELAY` | `100` | Base delay in ms (exponential backoff) |
 | `user_agent` | `FILE_STASH_USER_AGENT` | `Laravel-FileStash/5.x` | User-Agent header |

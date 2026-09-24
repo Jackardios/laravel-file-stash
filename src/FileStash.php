@@ -1563,8 +1563,9 @@ class FileStash implements FileStashContract
     {
         $isUnlimitedSize = $maxBytes < 0;
 
+        // -1 or 0: no stall limit (stream_set_timeout(0, 0) would time out at once).
         $readTimeout = $this->config['read_timeout'];
-        if ($readTimeout >= 0) {
+        if ($readTimeout > 0) {
             $seconds = (int) floor($readTimeout);
             $microseconds = (int) round(($readTimeout - $seconds) * 1_000_000);
 

@@ -118,7 +118,8 @@ steps, including how to switch workers over.
   the transfer stalls below 1 byte/s for that long). HTTP timeouts surface
   as Guzzle exceptions and participate in `http_retries`;
   `SourceResourceTimedOutException` is now only thrown for storage-disk
-  streams.
+  streams. `read_timeout => 0` means no stall limit, like `-1` (storage-disk
+  streams used to time out immediately).
 - Responses stream directly to the temp file with an on-the-fly size limit —
   oversized downloads abort mid-transfer instead of buffering the whole body.
 - HTTP retries restart from a truncated file (previously a retry after a

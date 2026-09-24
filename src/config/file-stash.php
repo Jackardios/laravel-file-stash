@@ -58,7 +58,7 @@ return [
      | For HTTP(S) sources this maps to curl's low-speed abort: the transfer
      | fails when it stalls below 1 byte/s for this many seconds (whole
      | seconds, rounded up). For storage-disk streams it is applied via
-     | stream_set_timeout(). Set to -1 to wait indefinitely.
+     | stream_set_timeout(). Set to -1 (or 0) to wait indefinitely.
      | Default: 30 seconds
      */
     'read_timeout' => env('FILE_STASH_READ_TIMEOUT', 30.0),

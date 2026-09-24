@@ -353,9 +353,10 @@ class RemoteFetcher
      * on_redirect callback runs after the host validation passed.
      *
      * `read_timeout` maps to curl's low-speed abort (CURLOPT_LOW_SPEED_*): the
-     * transfer fails when it stalls below 1 byte/s for that many seconds. The
-     * Guzzle `read_timeout` option only applies to the PHP stream handler and
-     * would be a no-op with the (default) curl handler.
+     * transfer fails when it stalls below 1 byte/s for that many seconds (-1
+     * or 0: no stall limit). The Guzzle `read_timeout` option only applies to
+     * the PHP stream handler and would be a no-op with the (default) curl
+     * handler.
      *
      * @return array{
      *   timeout: float,
@@ -400,7 +401,7 @@ class RemoteFetcher
 
         $curl = $this->clientOption('curl');
         $readTimeout = $this->config['read_timeout'];
-        if ($readTimeout >= 0) {
+        if ($readTimeout > 0) {
             // Not a spread: it would renumber the integer CURLOPT_* keys.
             $curl = [
                 \CURLOPT_LOW_SPEED_LIMIT => 1,
