@@ -165,7 +165,7 @@ FileStash::getOnce($invoice, function ($file, $path) {
 // Cached file is automatically removed from disk
 ```
 
-> **Note:** the cache entry is shared by URL across all workers. `getOnce()`/`batchOnce()` delete that shared entry after the callback — if other workers use `get()` on the same URL, you are evicting their warm cache and forcing a re-download. Deletion is best effort: it is skipped for files another worker is actively reading at that moment, and if the exclusive lifecycle lock cannot be acquired within `lifecycle_lock_timeout` a warning is logged — the callback result is still returned and the entry is left for `prune()`.
+> **Note:** the cache entry is shared by URL across all workers. `getOnce()`/`batchOnce()` delete that shared entry after the callback — if other workers use `get()` on the same URL, you are evicting their warm cache and forcing a re-download. Deletion is best effort and never waits for other workers' callbacks: it is skipped for files another worker is reading at that moment, and while a chunked batch of another worker runs it waits for the pin lock at most `lifecycle_lock_timeout`, then logs a warning — either way the callback result is still returned and the entry is left for `prune()`.
 
 ---
 
@@ -250,7 +250,7 @@ Pruner  ─── prune()          ──► tries LOCK_EX on file ──► ski
 
 While your callback runs, each cached file is held with a shared lock (`LOCK_SH`). The pruner tries to acquire an exclusive lock (`LOCK_EX`) before deleting — if it can't, it skips the file.
 
-> **Chunked batches.** When a batch contains more files than `batch_chunk_size` (default 100), files are retrieved chunk by chunk and their shared locks are released after each chunk (this prevents file descriptor exhaustion). Instead, a chunked batch holds a shared **pin lock** (`.pin.lock` in the cache directory) from the first chunk until the callback returns: while any chunked batch runs, `prune()` evicts nothing (it reports `completed => false` and catches up on its next run). `forget()`, `clear()`, and `getOnce()`/`batchOnce()` cleanup from other workers are excluded by the lifecycle lock as usual. Keep chunked batches short — a batch that runs for hours postpones eviction for as long.
+> **Chunked batches.** When a batch contains more files than `batch_chunk_size` (default 100), files are retrieved chunk by chunk and their shared locks are released after each chunk (this prevents file descriptor exhaustion). Instead, a chunked batch holds a shared **pin lock** (`.pin.lock` in the cache directory) from the first chunk until the callback returns: while any chunked batch runs, `prune()` evicts nothing (it reports `completed => false` and catches up on its next run), and `forget()` and the `getOnce()`/`batchOnce()` cleanup of other workers wait for it (at most `lifecycle_lock_timeout`). `clear()` is excluded by the lifecycle lock as usual. Keep chunked batches short — a batch that runs for hours postpones eviction for as long.
 
 `clear()` goes further — it acquires an exclusive lifecycle lock, so it waits until all `batch()`/`get()` operations finish before deleting anything.
 
@@ -258,7 +258,7 @@ While your callback runs, each cached file is held with a shared lock (`LOCK_SH`
 
 Cache calls may be nested (e.g. `get()` inside a `batch()` callback) — the lifecycle lock is reentrant within a process. Two rules apply:
 
-- `forget()`, `getOnce()`, or `batchOnce()` inside a `batch()`/`batchOnce()` callback: the deletion cannot upgrade the shared lifecycle lock to an exclusive one, so it is **deferred** — the entry stays on disk for the whole callback and is deleted under a real exclusive lifecycle lock right after the outermost batch releases its shared lock. `forget()` returns `true` in that case, meaning "scheduled for deletion". Note the flush happens once per outermost batch: if a later chunk of the same batch re-downloads a forgotten entry, the flush removes the fresh copy too.
+- `forget()`, `getOnce()`, or `batchOnce()` inside a `batch()`/`batchOnce()` callback: the entry may still be in use by the callback, so the deletion is **deferred** — the entry stays on disk for the whole callback and is deleted right after the outermost batch releases its shared lifecycle lock. `forget()` returns `true` in that case, meaning "scheduled for deletion". Note the flush happens once per outermost batch: if a later chunk of the same batch re-downloads a forgotten entry, the flush removes the fresh copy too.
 - `clear()` inside a `batch()`/`batchOnce()` callback throws a `LogicException` immediately instead of deadlocking.
 
 ### Lock configuration
@@ -545,7 +545,7 @@ All exceptions are in `Jackardios\FileStash\Exceptions` with `public readonly` p
 | `SourceResourceIsInvalidException` | Invalid stream resource | — |
 | `SourceResourceTimedOutException` | Storage-disk stream read timed out | — |
 | `FailedToRetrieveFileException` | All retries exhausted | `int $statusCode` (`0` if not HTTP) |
-| `LifecycleLockTimeoutException` | Lifecycle lock not acquired within `lifecycle_lock_timeout` (extends `RuntimeException`; `forget()` catches it and returns `false`) | — |
+| `LifecycleLockTimeoutException` | Lifecycle or pin lock not acquired within `lifecycle_lock_timeout` (extends `RuntimeException`; `forget()` catches it and returns `false`) | — |
 
 ```php
 use Jackardios\FileStash\Exceptions\HostNotAllowedException;
@@ -606,7 +606,7 @@ The fake is hermetic: it never downloads anything and never reads storage disks,
 ## Known Limitations
 
 - **Local filesystem only.** All guarantees are built on `flock()`, atomic `rename()`, and inode semantics of a local POSIX filesystem. Do **not** point `path` at NFS or other network mounts — advisory locking there ranges from unreliable to silently broken. In multi-server setups give each server its own cache directory.
-- **flock has no fairness.** An exclusive waiter (`clear()`, a `getOnce()` cleanup) can be starved indefinitely by a continuous stream of shared readers on a very hot file. In practice the `lifecycle_lock_timeout` bounds the wait; design hot paths so `clear()` isn't racing them constantly.
+- **flock has no fairness.** `clear()` waits for an exclusive lifecycle lock, which every running `get()`/`batch()` holds shared, and can be starved by a continuous stream of them; deletions (`forget()`, the once-cleanup, `prune()`) can be starved the same way by overlapping chunked batches. `lifecycle_lock_timeout` bounds the wait; design hot paths so `clear()` isn't racing them constantly.
 - **Chunked batches pause eviction** — while one runs, `prune()` deletes nothing; see [Batch + prune](#batch--prune).
 - **`block_private_hosts` cannot stop DNS rebinding** — curl re-resolves the hostname for the actual request. Use `allowed_hosts` as the primary SSRF defense.
 - **Windows is best-effort.** Downloads, MIME checks and locking work, and CI runs the fast suite on Windows, but the concurrency guarantees are only verified on POSIX systems. NTFS keeps a deleted file visible until its last handle closes, so the checks that detect an entry deleted or replaced under a reader do not fire, and `rename()` over an entry another process holds open can fail after its retries.

@@ -1689,7 +1689,7 @@ class FileStashTest extends TestCase
         $file = new GenericFile('fixtures://test-image.jpg');
         $cache = new class(['path' => $this->cachePath]) extends FileStash
         {
-            protected function withLifecycleExclusiveLock(callable $callback)
+            protected function deleteUnusedEntries(array $paths, string $reason): array
             {
                 throw new \RuntimeException('cleanup failed');
             }
@@ -1718,9 +1718,9 @@ class FileStashTest extends TestCase
 
         try {
             $result = $cache->getOnce($file, function ($file, $path) use (&$foreignLock) {
-                // Another process enters a batch while the callback runs, so
-                // the exclusive lock for the cleanup cannot be acquired.
-                $foreignLock = fopen("{$this->cachePath}/.lifecycle.lock", 'c+');
+                // A chunked batch of another process starts while the
+                // callback runs, so the cleanup cannot take the pin lock.
+                $foreignLock = fopen("{$this->cachePath}/.pin.lock", 'c+');
                 $this->assertTrue(flock($foreignLock, LOCK_SH));
 
                 return file_get_contents($path);
@@ -3370,7 +3370,7 @@ class FileStashTest extends TestCase
         $this->assertDirectoryDoesNotExist($nonExistentPath);
     }
 
-    public function testForgetReturnsFalseOnLifecycleLockTimeout()
+    public function testForgetReturnsFalseWhileAChunkedBatchHoldsThePinLock()
     {
         $cache = $this->createCache([
             'lifecycle_lock_timeout' => 0.05,
@@ -3378,9 +3378,10 @@ class FileStashTest extends TestCase
         $file = new GenericFile('fixtures://test-file.txt');
         $path = $cache->get($file, $this->noop);
 
-        // Simulate another process holding the lifecycle lock exclusively.
-        $lock = fopen("{$this->cachePath}/.lifecycle.lock", 'c+');
-        $this->assertTrue(flock($lock, LOCK_EX));
+        // A chunked batch of another process: its entries are not locked
+        // individually during the callback, only the pin lock protects them.
+        $lock = fopen("{$this->cachePath}/.pin.lock", 'c+');
+        $this->assertTrue(flock($lock, LOCK_SH));
 
         try {
             $this->assertFalse($cache->forget($file));
@@ -3389,6 +3390,87 @@ class FileStashTest extends TestCase
             flock($lock, LOCK_UN);
             fclose($lock);
         }
+    }
+
+    /**
+     * Another worker inside get()/batch() holds the lifecycle lock shared for
+     * its whole callback. Deleting an entry it does not use must not wait
+     * for it — with lifecycle_lock_timeout = 0.05 the old exclusive
+     * lifecycle lock gave up and left the entry behind.
+     */
+    #[DataProvider('unrelatedWorkDeletionProvider')]
+    public function testDeletionsDoNotWaitForBatchesOfOtherWorkers(string $operation)
+    {
+        $cache = $this->createCache(['lifecycle_lock_timeout' => 0.05]);
+        $file = new GenericFile('fixtures://test-file.txt');
+        $path = $cache->get($file, $this->noop);
+
+        $lock = fopen("{$this->cachePath}/.lifecycle.lock", 'c+');
+        $this->assertTrue(flock($lock, LOCK_SH));
+
+        try {
+            match ($operation) {
+                'forget' => $this->assertTrue($cache->forget($file)),
+                'getOnce' => $cache->getOnce($file, $this->noop),
+                'deferred forget' => $cache->batch([$file], fn () => $this->assertTrue($cache->forget($file))),
+            };
+            $this->assertFileDoesNotExist($path);
+        } finally {
+            fclose($lock);
+        }
+    }
+
+    public static function unrelatedWorkDeletionProvider(): array
+    {
+        return [
+            'forget' => ['forget'],
+            'getOnce cleanup' => ['getOnce'],
+            'deferred forget' => ['deferred forget'],
+        ];
+    }
+
+    public function testForgetSkipsAnEntryAnotherWorkerIsReading()
+    {
+        $cache = $this->createCache(['lifecycle_lock_timeout' => 5]);
+        $file = new GenericFile('fixtures://test-file.txt');
+        $path = $cache->get($file, $this->noop);
+
+        // Another worker inside get() holds the entry shared.
+        $reader = fopen($path, 'rb');
+        $this->assertTrue(flock($reader, LOCK_SH));
+
+        try {
+            $start = microtime(true);
+            $this->assertFalse($cache->forget($file));
+            $this->assertLessThan(1.0, microtime(true) - $start, 'forget() must skip, not wait');
+            $this->assertFileExists($path);
+        } finally {
+            fclose($reader);
+        }
+    }
+
+    public function testDeferredFlushLogsFailuresInsteadOfSwallowingThem()
+    {
+        $logger = new RecordingLogger;
+        $events = new \Illuminate\Events\Dispatcher;
+        $events->listen(CacheFileEvicted::class, function () {
+            throw new \LogicException('listener failed');
+        });
+        $cache = new FileStash(
+            ['path' => $this->cachePath, 'events_enabled' => true],
+            null,
+            null,
+            null,
+            $logger,
+            $events
+        );
+        $file = new GenericFile('fixtures://test-file.txt');
+
+        $cache->batch([$file], fn () => $cache->forget($file));
+
+        $warnings = $logger->messages('warning');
+        $this->assertCount(1, $warnings);
+        $this->assertStringContainsString('deferred', $warnings[0]);
     }
 
     public function testBatchThrowsLifecycleLockTimeoutException()

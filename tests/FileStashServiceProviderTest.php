@@ -78,8 +78,9 @@ class FileStashServiceProviderTest extends TestCase
         $this->app['files']->makeDirectory($path, 0777, true, true);
         $this->app['files']->put("{$path}/".hash('sha256', 'fixtures://a.txt'), 'a');
 
-        $lock = fopen("{$path}/.lifecycle.lock", 'c+');
-        flock($lock, LOCK_EX);
+        // A chunked batch of another worker holds the pin lock.
+        $lock = fopen("{$path}/.pin.lock", 'c+');
+        flock($lock, LOCK_SH);
 
         try {
             $this->assertFalse($this->app->make('file-stash')->forget(new GenericFile('fixtures://a.txt')));

@@ -50,15 +50,17 @@ steps, including how to switch workers over.
 - The lifecycle lock is reentrant within a process (nested `get()` inside
   `batch()` callbacks no longer self-deadlock, including across two manually
   constructed instances).
-- `forget()` and `getOnce()`/`batchOnce()` cleanup now take the exclusive
-  lifecycle lock, so they cannot race running batches. Inside a
-  `batch()`/`batchOnce()` callback the deletion is **deferred**: the entry
-  survives the whole callback and is deleted under a real exclusive lock
-  right after the outermost batch releases its shared lock (`forget()`
-  returns `true` = "deleted or scheduled"; eviction events/metrics fire at
-  flush time). If a later chunk of the same batch re-downloads a forgotten
+- `forget()` and `getOnce()`/`batchOnce()` cleanup cannot delete entries a
+  running batch uses: entries another worker reads are skipped, chunked
+  batches are waited for through the pin lock (at most
+  `lifecycle_lock_timeout`), and unrelated work is never waited for. Inside
+  a `batch()`/`batchOnce()` callback the deletion is **deferred**: the entry
+  survives the whole callback and is deleted right after the outermost
+  batch releases its shared lock (`forget()` returns `true` = "deleted or
+  scheduled"; eviction events/metrics fire at flush time; a failed flush is
+  logged). If a later chunk of the same batch re-downloads a forgotten
   entry, the flush removes the fresh copy too.
-- Lifecycle-lock acquisition timeouts throw the new
+- Lifecycle- and pin-lock acquisition timeouts throw the new
   `LifecycleLockTimeoutException` (extends `RuntimeException`, so existing
   catch blocks keep working). `forget()` catches it, logs a warning and
   returns `false`; `batch()`/`batchOnce()`/`prune()`/`clear()` propagate it.

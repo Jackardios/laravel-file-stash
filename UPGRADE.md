@@ -100,10 +100,12 @@ for storage-disk streams only.
 **Events** are `final readonly` classes; do not extend them. `CacheMiss`
 lost its `$url` property: use `$event->file->getUrl()`.
 
-**Deletions inside batch callbacks.** `forget()` and the `getOnce()` /
+**Deletions and running batches.** `forget()` and the `getOnce()` /
 `batchOnce()` cleanup no longer delete files that a running batch callback
-may still use: inside a callback the deletion happens after the outermost
-batch returns (`forget()` returns `true` for "deleted or scheduled").
+may still use. A file another worker is reading is skipped (`forget()`
+returns `false`, the cleanup leaves it to `prune()`). Inside a callback the
+deletion happens after the outermost batch returns (`forget()` returns
+`true` for "deleted or scheduled").
 Calling `clear()` inside a batch callback throws `LogicException`.
 
 **Lock timeouts** throw `LifecycleLockTimeoutException`, which extends

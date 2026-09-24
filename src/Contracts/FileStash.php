@@ -112,8 +112,9 @@ interface FileStash
      * "scheduled for deletion".
      *
      * @return bool True when the file was deleted or scheduled for deletion;
-     *              false when it didn't exist, is in use, or the lifecycle
-     *              lock timed out.
+     *              false when it didn't exist, another worker is using it,
+     *              or a chunked batch kept the pin lock beyond
+     *              lifecycle_lock_timeout.
      */
     public function forget(File $file): bool;
 

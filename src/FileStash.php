@@ -202,15 +202,16 @@ class FileStash implements FileStashContract
     /**
      * Remove a specific file from the cache.
      *
-     * Inside a batch()/batchOnce() callback the entry may be in active use
-     * by this very process, so the deletion is deferred: it happens under a
-     * real exclusive lifecycle lock right after the batch releases its
-     * shared lock, and `true` means "scheduled".
+     * An entry another worker is reading is skipped, not waited for. Inside
+     * a batch()/batchOnce() callback the entry may be in active use by this
+     * very process, so the deletion is deferred until the batch returns, and
+     * `true` means "scheduled".
      *
      * @param  File  $file  The file to remove from cache
      * @return bool True when the file was deleted (or scheduled for deletion
      *              inside a batch callback); false when it didn't exist, is
-     *              in use, or the lifecycle lock timed out
+     *              in use, or a chunked batch held the pin lock for longer
+     *              than lifecycle_lock_timeout
      */
     public function forget(File $file): bool
     {
@@ -229,11 +230,9 @@ class FileStash implements FileStashContract
         }
 
         try {
-            return (bool) $this->withLifecycleExclusiveLock(
-                fn (): bool => $this->deleteEntry($cachedPath, 'forgotten') === DeleteResult::Deleted
-            );
+            return $this->deleteUnusedEntries([$cachedPath], 'forgotten') === [DeleteResult::Deleted];
         } catch (LifecycleLockTimeoutException $exception) {
-            $this->logger->warning('Could not acquire the lifecycle lock to forget a cached file.', [
+            $this->logger->warning('Could not acquire the pin lock to forget a cached file.', [
                 'path' => $cachedPath,
                 'exception' => $exception->getMessage(),
             ]);
@@ -341,9 +340,9 @@ class FileStash implements FileStashContract
      * chunks and the per-file shared locks of a chunk are released before the
      * next chunk starts (bounding open file descriptors). In that mode the
      * shared pin lock — taken before the first chunk and held through the
-     * callback — keeps prune() from evicting entries, and the lifecycle lock
-     * keeps clear()/forget() of other workers out; only a deletion outside
-     * the lock protocol could remove the files.
+     * callback — keeps prune(), forget() and the once-cleanup of other
+     * workers from deleting entries, and the lifecycle lock keeps clear()
+     * out; only a deletion outside the lock protocol could remove the files.
      *
      * @param  array<int, File>  $files
      * @param  callable(array<int, File>, array<int, string>): mixed  $callback
@@ -394,7 +393,7 @@ class FileStash implements FileStashContract
     /**
      * Take the pin lock shared for a chunked batch.
      *
-     * prune() holds it exclusively only while deleting a single entry, so
+     * Deletions hold it exclusively only while unlinking their entries, so
      * the wait is short; it is bounded by lifecycle_lock_timeout anyway.
      *
      * @return resource
@@ -417,7 +416,8 @@ class FileStash implements FileStashContract
 
     /**
      * Path of the pin lock that chunked batches hold shared for their whole
-     * callback, and prune() takes exclusively for each eviction.
+     * callback, and deletions (prune(), forget(), the once-cleanup) take
+     * exclusively.
      */
     protected function getPinLockPath(): string
     {
@@ -470,11 +470,7 @@ class FileStash implements FileStashContract
                 }
             } else {
                 try {
-                    $this->withLifecycleExclusiveLock(function () use ($pathsToDelete) {
-                        foreach ($pathsToDelete as $path) {
-                            $this->deleteEntry($path, 'once');
-                        }
-                    });
+                    $this->deleteUnusedEntries($pathsToDelete, 'once');
                 } catch (RuntimeException $exception) {
                     // The cleanup is best effort: failing the caller after
                     // its callback already ran would invite a retry of work
@@ -835,8 +831,9 @@ class FileStash implements FileStashContract
     /**
      * Execute callback while holding a shared lifecycle lock.
      *
-     * The shared lock keeps prune/clear and one-time deletion from removing
-     * files while they are in active use.
+     * The shared lock keeps clear() from removing files while they are in
+     * active use, and tells deletions of this process that they are nested
+     * in a batch (see deferDeletion()).
      *
      * @return mixed
      *
@@ -883,8 +880,8 @@ class FileStash implements FileStashContract
 
     /**
      * Queue an entry deletion until the outermost shared lifecycle frame of
-     * this process releases, then flush the queue under a real exclusive
-     * lifecycle lock. Eviction metrics/events fire at flush time.
+     * this process releases, then flush the queue. Eviction metrics/events
+     * fire at flush time.
      */
     protected function deferDeletion(string $path, string $reason): void
     {
@@ -900,11 +897,12 @@ class FileStash implements FileStashContract
     }
 
     /**
-     * Delete all queued entries under an exclusive lifecycle lock.
+     * Delete all queued entries.
      *
      * The queue is detached first, so re-entrant deferrals start a fresh
-     * queue. On a lock timeout the entries stay on disk for prune() to
-     * reclaim later.
+     * queue. The flush runs from a lock-release hook, which has no caller to
+     * report to: every failure is logged, and the entries stay on disk for
+     * prune() to reclaim later.
      */
     protected function flushDeferredDeletions(): void
     {
@@ -916,16 +914,44 @@ class FileStash implements FileStashContract
         }
 
         try {
-            $this->withLifecycleExclusiveLock(function () use ($deletions): void {
-                foreach ($deletions as $deletion) {
-                    $this->deleteEntry($deletion['path'], $deletion['reason']);
-                }
-            });
-        } catch (LifecycleLockTimeoutException $exception) {
+            foreach ($deletions as $deletion) {
+                $this->deleteUnusedEntries([$deletion['path']], $deletion['reason']);
+            }
+        } catch (\Throwable $exception) {
             $this->logger->warning('Could not flush deferred cache deletions; leaving them to prune().', [
                 'paths_count' => count($deletions),
                 'exception' => $exception->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * Delete entries no other worker is using, without waiting for
+     * unrelated work.
+     *
+     * The pin lock, held exclusively only for the deletions, waits for
+     * chunked batches (their entries are not locked individually during the
+     * callback); unlinkLocked() skips entries another worker holds.
+     *
+     * @param  array<int, string>  $paths
+     * @return array<int, DeleteResult>
+     *
+     * @throws LifecycleLockTimeoutException
+     */
+    protected function deleteUnusedEntries(array $paths, string $reason): array
+    {
+        $pin = LockManager::openLockFile($this->getPinLockPath());
+
+        try {
+            if (! LockManager::flockWithTimeout($pin, LOCK_EX, $this->config['lifecycle_lock_timeout'])) {
+                throw LifecycleLockTimeoutException::create(
+                    "Failed to acquire file cache pin lock within {$this->config['lifecycle_lock_timeout']} seconds."
+                );
+            }
+
+            return array_map(fn (string $path): DeleteResult => $this->deleteEntry($path, $reason), $paths);
+        } finally {
+            fclose($pin);
         }
     }
 
