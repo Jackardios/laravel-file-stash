@@ -161,8 +161,6 @@ jobs:
           php-version: '8.4'
           extensions: curl, fileinfo, mbstring, pcntl, posix
           coverage: pcov
-          # Checksum of the GPG-verified 0.35.4 release phar.
-          tools: infection:0.35.4@sha256:24e9d2ab5fc5613be6b9fea99cfd2c689234d6e6053f339b8f5e05136246070a
 
       - name: Install dependencies
         run: composer update --prefer-dist --no-interaction --no-progress
@@ -170,8 +168,16 @@ jobs:
       - name: Coverage
         run: vendor/bin/phpunit --exclude-group concurrency --coverage-text --only-summary-for-coverage-text --coverage-xml=build/coverage/coverage-xml --log-junit=build/coverage/junit.xml
 
+      # setup-php v2 turns `infection:0.35.4@sha256:...` into a non-existent
+      # download URL and installs the error page without failing, so the
+      # phar is fetched by hand and checked against the GPG-verified release.
+      - name: Install Infection
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/infection.phar" https://github.com/infection/infection/releases/download/0.35.4/infection.phar
+          echo "24e9d2ab5fc5613be6b9fea99cfd2c689234d6e6053f339b8f5e05136246070a  $RUNNER_TEMP/infection.phar" | sha256sum -c -
+
       - name: Mutation testing
-        run: infection --coverage=build/coverage --skip-initial-tests --threads=max --no-progress --min-msi=97 --min-covered-msi=97
+        run: php "$RUNNER_TEMP/infection.phar" --coverage=build/coverage --skip-initial-tests --threads=max --no-progress --min-msi=97 --min-covered-msi=97
 
   experimental:
     runs-on: ${{ matrix.os }}
