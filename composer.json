@@ -1,6 +1,6 @@
 {
     "name": "jackardios/laravel-file-stash",
-    "description": "Fetch and cache files from local filesystem, cloud storage or public webservers in Laravel",
+    "description": "Fetch and cache files from Laravel storage disks or public webservers, safely across parallel workers",
     "type": "library",
     "license": "MIT",
     "require": {
@@ -14,6 +14,9 @@
         "guzzlehttp/guzzle": "^7.15.2 || ^8.0.1",
         "psr/http-message": "^1.1 || ^2.0",
         "psr/log": "^2.0 || ^3.0"
+    },
+    "suggest": {
+        "ext-fileinfo": "Required for the mime_types whitelist"
     },
     "require-dev": {
         "phpunit/phpunit": "^11.5 || ^12.0 || ^13.0",
