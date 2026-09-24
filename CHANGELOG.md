@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented in this file.
 
-## v5.0.0 — Unreleased
+## v5.0.0 — 2026-09-24
 
 Major rewrite of the concurrency core. Projects on Laravel 10/11 or
 PHP 8.1/8.2 stay on `^4.0`. See [UPGRADE.md](UPGRADE.md) for the migration
