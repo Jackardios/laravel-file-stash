@@ -102,10 +102,14 @@ jobs:
         run: composer update --prefer-dist --prefer-lowest --prefer-stable --no-interaction --no-progress
 
       - name: Installed versions
-        run: composer show | grep -E '^(laravel/framework|guzzlehttp/guzzle|phpunit/phpunit|symfony/console) '
+        run: composer show | grep -E '^(laravel/framework|guzzlehttp/guzzle|phpunit/phpunit|brianium/paratest|symfony/console) '
 
-      - name: Tests
-        run: vendor/bin/phpunit
+      # ParaTest too, so its floor is exercised against the lowest PHPUnit.
+      - name: Fast suite (parallel)
+        run: vendor/bin/paratest --exclude-group concurrency
+
+      - name: Concurrency suite (real processes)
+        run: vendor/bin/phpunit --group concurrency
 
   quality:
     runs-on: ubuntu-latest
