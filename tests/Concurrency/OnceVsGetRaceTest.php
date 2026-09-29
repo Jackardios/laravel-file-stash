@@ -25,7 +25,7 @@ class OnceVsGetRaceTest extends ConcurrencyTestCase
             $this->spawnWorker(['op' => 'get', 'urls' => [$url], 'iterations' => 6]),
         ];
 
-        $results = $this->awaitWorkers($workers, 120.0);
+        $results = $this->awaitWorkers($workers);
 
         foreach ($results as $index => $result) {
             $this->assertTrue($result['ok'] ?? false, "Worker #{$index} failed: ".$result['_stdout'].$result['_stderr']);

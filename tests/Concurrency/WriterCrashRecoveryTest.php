@@ -44,7 +44,7 @@ class WriterCrashRecoveryTest extends ConcurrencyTestCase
 
         // Worker B must take over: the kernel released the claim lock.
         $workerB = $this->spawnWorker(['op' => 'get', 'urls' => [$url]]);
-        $resultB = $this->awaitWorkers([$workerB], 120.0)[0];
+        $resultB = $this->awaitWorkers([$workerB])[0];
 
         $this->assertTrue($resultB['ok'] ?? false, 'Second worker failed: '.$resultB['_stdout'].$resultB['_stderr']);
         $this->assertSame(

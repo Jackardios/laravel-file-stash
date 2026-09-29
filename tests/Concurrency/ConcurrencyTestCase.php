@@ -22,6 +22,9 @@ abstract class ConcurrencyTestCase extends TestCase
     /** @var array<int, array{proc: resource, pipes: array<int, resource>}> */
     private array $serverHandles = [];
 
+    /** @var array<int, resource> Worker processes, killed in tearDown if still running. */
+    private array $workerProcs = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -43,8 +46,19 @@ abstract class ConcurrencyTestCase extends TestCase
         }
         $this->serverHandles = [];
 
+        // Workers of a failed test must not outlive it (proc_close()d
+        // handles are no longer resources).
+        foreach ($this->workerProcs as $proc) {
+            if (is_resource($proc)) {
+                proc_terminate($proc, defined('SIGKILL') ? SIGKILL : 9);
+                proc_close($proc);
+            }
+        }
+        $this->workerProcs = [];
+
         if (isset($this->cachePath)) {
             $this->files->deleteDirectory($this->cachePath);
+            $this->files->deleteDirectory($this->cachePath.'_bootstrap');
         }
 
         parent::tearDown();
@@ -142,6 +156,8 @@ abstract class ConcurrencyTestCase extends TestCase
     protected function spawnWorker(array $task): array
     {
         $task['config'] = array_merge(['path' => $this->cachePath], $task['config'] ?? []);
+        // Removed in tearDown: a killed worker cannot clean up after itself.
+        $task['bootstrap_cache'] = $this->cachePath.'_bootstrap/'.bin2hex(random_bytes(4));
 
         $command = [PHP_BINARY, __DIR__.'/fixtures/worker.php', base64_encode((string) json_encode($task))];
 
@@ -155,6 +171,7 @@ abstract class ConcurrencyTestCase extends TestCase
             throw new RuntimeException('Failed to spawn worker.');
         }
 
+        $this->workerProcs[] = $proc;
         $status = proc_get_status($proc);
 
         return ['proc' => $proc, 'pipes' => $pipes, 'pid' => $status['pid']];
@@ -163,10 +180,14 @@ abstract class ConcurrencyTestCase extends TestCase
     /**
      * Wait for workers to finish and decode their JSON results.
      *
+     * The timeout is shared by all workers and must stay below phpunit.xml's
+     * defaultTimeLimit (60 s): past that PHPUnit kills the test without the
+     * workers' stderr.
+     *
      * @param  array<int, array{proc: resource, pipes: array<int, resource>, pid: int}>  $workers
      * @return array<int, array{ok?: bool, results?: array<int, mixed>, error?: array{class: string, message: string}, _stdout: string, _stderr: string, _exit: int}>
      */
-    protected function awaitWorkers(array $workers, float $timeoutSeconds = 60.0): array
+    protected function awaitWorkers(array $workers, float $timeoutSeconds = 45.0): array
     {
         $deadline = microtime(true) + $timeoutSeconds;
         $results = [];

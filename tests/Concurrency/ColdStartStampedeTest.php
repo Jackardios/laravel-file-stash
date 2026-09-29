@@ -22,7 +22,7 @@ class ColdStartStampedeTest extends ConcurrencyTestCase
             $workers[] = $this->spawnWorker(['op' => 'get', 'urls' => [$url]]);
         }
 
-        $results = $this->awaitWorkers($workers, 120.0);
+        $results = $this->awaitWorkers($workers);
         $expectedSha = hash('sha256', $this->expectedServerBody('/stampede.bin', 16));
 
         foreach ($results as $index => $result) {

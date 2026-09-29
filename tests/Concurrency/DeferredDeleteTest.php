@@ -77,7 +77,7 @@ class DeferredDeleteTest extends ConcurrencyTestCase
         );
         $this->assertFileDoesNotExist($this->cachePath.'/'.hash('sha256', $onceUrl));
 
-        [$busyResult] = $this->awaitWorkers([$busy], 60.0);
+        [$busyResult] = $this->awaitWorkers([$busy]);
         $this->assertTrue($busyResult['ok'] ?? false, 'Worker failed: '.$busyResult['_stdout'].$busyResult['_stderr']);
         $this->assertFileExists($busyEntry);
     }
@@ -100,7 +100,7 @@ class DeferredDeleteTest extends ConcurrencyTestCase
             $readers[] = $this->spawnWorker(['op' => 'get', 'urls' => [$urlX], 'iterations' => 8]);
         }
 
-        $results = $this->awaitWorkers([$batchWorker, ...$readers], 180.0);
+        $results = $this->awaitWorkers([$batchWorker, ...$readers]);
 
         foreach ($results as $index => $result) {
             $this->assertTrue($result['ok'] ?? false, "Worker #{$index} failed: ".$result['_stdout'].$result['_stderr']);

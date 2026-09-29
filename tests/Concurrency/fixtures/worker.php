@@ -44,12 +44,8 @@ if (! is_array($task)) {
 
 // Private bootstrap cache: concurrent workers must not rewrite (and read
 // half-replaced) the shared testbench manifest in vendor/.
-$bootstrapCache = sys_get_temp_dir().'/file_stash_worker_'.getmypid().'_'.bin2hex(random_bytes(4));
+$bootstrapCache = $task['bootstrap_cache'];
 mkdir($bootstrapCache, 0777, true);
-register_shutdown_function(static function () use ($bootstrapCache): void {
-    array_map('unlink', glob($bootstrapCache.'/*') ?: []);
-    @rmdir($bootstrapCache);
-});
 foreach (['APP_PACKAGES_CACHE' => 'packages.php', 'APP_SERVICES_CACHE' => 'services.php'] as $name => $file) {
     putenv("{$name}={$bootstrapCache}/{$file}");
 }

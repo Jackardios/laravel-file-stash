@@ -44,7 +44,7 @@ class LifecycleLockContentionTest extends ConcurrencyTestCase
         ];
         $clearWorker = $this->spawnWorker(['op' => 'clear', 'iterations' => 3]);
 
-        $results = $this->awaitWorkers(array_merge($batchWorkers, [$clearWorker]), 180.0);
+        $results = $this->awaitWorkers(array_merge($batchWorkers, [$clearWorker]));
         $clearResult = array_pop($results);
 
         foreach ($results as $index => $result) {

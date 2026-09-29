@@ -38,7 +38,7 @@ class PruneVsBatchTest extends ConcurrencyTestCase
             'config' => ['max_size' => 1],
         ]);
 
-        $results = $this->awaitWorkers(array_merge($workers, [$pruneWorker]), 180.0);
+        $results = $this->awaitWorkers(array_merge($workers, [$pruneWorker]));
         $pruneResult = array_pop($results);
 
         foreach ($results as $index => $result) {
@@ -113,7 +113,7 @@ class PruneVsBatchTest extends ConcurrencyTestCase
             $this->assertFileExists($entryPath, 'Prune deleted an entry that an open batch() is using.');
         }
 
-        $batchResult = $this->awaitWorkers([$batchWorker], 60.0)[0];
+        $batchResult = $this->awaitWorkers([$batchWorker])[0];
         $this->assertTrue($batchResult['ok'] ?? false, 'Batch worker failed: '.$batchResult['_stdout'].$batchResult['_stderr']);
 
         foreach ($batchResult['results'][0] as $n => $info) {
