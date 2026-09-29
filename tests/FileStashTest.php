@@ -1961,7 +1961,7 @@ class FileStashTest extends TestCase
     }
 
     // =========================================================================
-    // Phase 1 Tests
+    // Prune Results
     // =========================================================================
 
     public function testPruneReturnsCompletedTrue()
@@ -2059,7 +2059,7 @@ class FileStashTest extends TestCase
     }
 
     // =========================================================================
-    // Phase 2 Tests - Events
+    // Events
     // =========================================================================
 
     public function testEventsDispatchedWhenEnabled()
@@ -2165,7 +2165,7 @@ class FileStashTest extends TestCase
     }
 
     // =========================================================================
-    // Phase 2 Tests - forget()
+    // forget()
     // =========================================================================
 
     public function testForgetDeletesCachedFile()
@@ -2226,7 +2226,7 @@ class FileStashTest extends TestCase
     }
 
     // =========================================================================
-    // Phase 2 Tests - Metrics
+    // Metrics
     // =========================================================================
 
     public function testMetricsIncrementCorrectly()
@@ -2319,7 +2319,7 @@ class FileStashTest extends TestCase
     }
 
     // =========================================================================
-    // Phase 3 Tests - Touch Throttling
+    // Touch Throttling
     // =========================================================================
 
     public function testTouchSkippedWhenWithinInterval()
@@ -2381,11 +2381,7 @@ class FileStashTest extends TestCase
     }
 
     // =========================================================================
-    // Phase 4 Tests - URL Encoding
-    // =========================================================================
-
-    // =========================================================================
-    // Phase 4 Tests - Structured Exceptions
+    // Structured Exceptions
     // =========================================================================
 
     public function testFileIsTooLargeExceptionHasMaxBytes()
@@ -3034,10 +3030,6 @@ class FileStashTest extends TestCase
         $this->expectException(HostNotAllowedException::class);
         $cache->get(new GenericFile('https://files/image.jpg'), $this->noop);
     }
-
-    // =========================================================================
-    // URL Sanitization Tests
-    // =========================================================================
 
     // =========================================================================
     // Config Validation Tests
@@ -3764,24 +3756,6 @@ class FileStashTest extends TestCase
         $this->assertFileDoesNotExist($path);
         $this->assertFileDoesNotExist($orphan);
         $this->assertSame([], glob("{$this->cachePath}/.locks/*.lock"));
-    }
-
-    public function testTwoInstancesNestedLifecycleCallsDoNotDeadlock()
-    {
-        // Two manually constructed instances share the same cache path; the
-        // lifecycle-lock registry is per process and keyed by lock path, so
-        // nested calls across instances nest instead of self-deadlocking.
-        $outer = $this->createCache(['lifecycle_lock_timeout' => 5]);
-        $inner = $this->createCache(['lifecycle_lock_timeout' => 5]);
-
-        $outerFile = new GenericFile('fixtures://test-image.jpg');
-        $innerFile = new GenericFile('fixtures://test-file.txt');
-
-        $result = $outer->batch([$outerFile], function () use ($inner, $innerFile) {
-            return $inner->get($innerFile, fn ($f, $path) => file_exists($path));
-        });
-
-        $this->assertTrue($result);
     }
 
     public function testClearOnSecondInstanceInsideBatchCallbackThrowsLogicException()

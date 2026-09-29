@@ -24,11 +24,9 @@ use PHPUnit\Framework\TestCase;
 /**
  * Tests that require PHP function mocking via PHPMock.
  *
- * These tests use plain PHPUnit TestCase (not Laravel's) because
- * Laravel's TestCase + @runTestsInSeparateProcesses causes crashes
- * on PHP 8.3+ with Laravel 10 due to error handler conflicts.
- *
- * @see https://github.com/laravel/framework/issues/49593
+ * Every test runs in its own process (a function mock stays defined for the
+ * rest of the process), so they use a plain PHPUnit TestCase with mocked
+ * disks instead of booting a Laravel application each time.
  */
 #[RunTestsInSeparateProcesses]
 class FileStashFunctionMockTest extends TestCase
@@ -36,8 +34,6 @@ class FileStashFunctionMockTest extends TestCase
     use PHPMock;
 
     protected string $cachePath;
-
-    protected string $diskPath;
 
     protected Filesystem $files;
 
@@ -48,18 +44,15 @@ class FileStashFunctionMockTest extends TestCase
         parent::setUp();
 
         $this->cachePath = sys_get_temp_dir().'/file_stash_test_'.bin2hex(random_bytes(8));
-        $this->diskPath = sys_get_temp_dir().'/file_stash_disk_'.bin2hex(random_bytes(8));
         $this->files = new Filesystem;
         $this->noop = fn ($file, $path) => $path;
 
         $this->files->makeDirectory($this->cachePath, 0755, false, true);
-        $this->files->makeDirectory($this->diskPath, 0755, false, true);
     }
 
     protected function tearDown(): void
     {
         $this->files->deleteDirectory($this->cachePath);
-        $this->files->deleteDirectory($this->diskPath);
         parent::tearDown();
     }
 
