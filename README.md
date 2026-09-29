@@ -507,6 +507,8 @@ FILE_STASH_ALLOWED_HOSTS=example.com,*.cdn.example.com
 
 IPv6 literals — in URLs and in `allowed_hosts` — are canonicalized before comparison, so `https://[2001:DB8::0001]/…` matches a whitelisted `2001:db8::1`. A non-empty `allowed_hosts` value that parses to zero hosts (a stray `','`, whitespace-only entries) throws `InvalidConfigurationException`; blocking all remote hosts requires an explicit empty array.
 
+`allowed_hosts` and `allowed_disks` also apply to files that are already cached, so a cache directory shared with a more permissive configuration (or a tightened policy) never serves a source this configuration rejects. `block_private_hosts`, `mime_types` and `max_file_size` are checked when a file is downloaded; serving a cached copy makes no request.
+
 ### Concurrency
 
 | Key | Env | Default | Description |

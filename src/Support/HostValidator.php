@@ -44,6 +44,33 @@ final class HostValidator
             return;
         }
 
+        $host = $this->hostOf($url);
+
+        if ($this->blockPrivateHosts && $this->isPrivateHost($host)) {
+            throw HostNotAllowedException::create($host);
+        }
+
+        $this->ensureListed($host);
+    }
+
+    /**
+     * Validate a URL's host against the allowed hosts only, without
+     * resolving it: for cached copies, which are served without a request.
+     *
+     * @throws HostNotAllowedException
+     */
+    public function validateAllowedHost(string $url): void
+    {
+        if ($this->allowedHosts !== null) {
+            $this->ensureListed($this->hostOf($url));
+        }
+    }
+
+    /**
+     * @throws HostNotAllowedException When the URL has no host.
+     */
+    private function hostOf(string $url): string
+    {
         $parts = parse_url($url);
         if (! isset($parts['host'])) {
             throw HostNotAllowedException::create('(empty)');
@@ -51,12 +78,14 @@ final class HostValidator
 
         // Canonicalization strips IPv6 brackets and normalizes IPv6 literals,
         // so '[2001:DB8::0001]' matches an allowed-hosts entry '2001:db8::1'.
-        $host = IpRanges::canonicalizeHost($parts['host']);
+        return IpRanges::canonicalizeHost($parts['host']);
+    }
 
-        if ($this->blockPrivateHosts && $this->isPrivateHost($host)) {
-            throw HostNotAllowedException::create($host);
-        }
-
+    /**
+     * @throws HostNotAllowedException
+     */
+    private function ensureListed(string $host): void
+    {
         if ($this->allowedHosts === null) {
             return;
         }

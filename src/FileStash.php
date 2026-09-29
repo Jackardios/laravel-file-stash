@@ -1145,6 +1145,10 @@ class FileStash implements FileStashContract
     protected function retrieve(File $file, bool $throwOnLock = false): array
     {
         try {
+            // A cached copy is served under the same source policy as a
+            // download: another instance with a wider policy may have cached
+            // it under the same path, or the policy was tightened since.
+            $this->ensureSourceAllowed($file);
             $this->ensurePathExists();
             $cachedPath = $this->getCachedPath($file);
             $attempt = 0;
@@ -1675,17 +1679,38 @@ class FileStash implements FileStashContract
      */
     protected function getDisk(File $file): FilesystemAdapter
     {
-        $parts = Url::splitByProtocol($file->getUrl());
-        $diskName = $parts[0];
+        $diskName = Url::splitByProtocol($file->getUrl())[0];
+        $this->ensureDiskAllowed($diskName);
 
-        $allowedDisks = $this->config['allowed_disks'];
-        if ($allowedDisks !== null && ! in_array($diskName, $allowedDisks, true)) {
-            throw DiskNotAllowedException::create($diskName);
-        }
         /** @var FilesystemAdapter $disk */
         $disk = $this->storage()->disk($diskName);
 
         return $disk;
+    }
+
+    /**
+     * Check the host or disk whitelist for a file, without a request.
+     *
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
+     */
+    private function ensureSourceAllowed(File $file): void
+    {
+        if (Url::isRemote($file->getUrl())) {
+            $this->remoteFetcher->ensureHostAllowed($file);
+        } else {
+            $this->ensureDiskAllowed(Url::splitByProtocol($file->getUrl())[0]);
+        }
+    }
+
+    /**
+     * @throws DiskNotAllowedException
+     */
+    private function ensureDiskAllowed(string $diskName): void
+    {
+        $allowedDisks = $this->config['allowed_disks'];
+        if ($allowedDisks !== null && ! in_array($diskName, $allowedDisks, true)) {
+            throw DiskNotAllowedException::create($diskName);
+        }
     }
 
     /**

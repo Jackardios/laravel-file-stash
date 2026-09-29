@@ -1480,6 +1480,37 @@ class FileStashTest extends TestCase
         $cache->get(new GenericFile('fixtures://test-file.txt'));
     }
 
+    public function testHostAndDiskWhitelistsApplyToCachedEntries()
+    {
+        // Another instance with a wider policy cached these under the same path.
+        $wide = $this->createCacheWithMockClient([new Response(200, [], 'remote'), new Response(200, [], 'loopback')]);
+        $wide->get(new GenericFile('https://files/a.txt'));
+        $wide->get(new GenericFile('https://127.0.0.1/a.txt'));
+        $wide->get(new GenericFile('fixtures://test-file.txt'));
+
+        try {
+            $this->createCache(['allowed_hosts' => ['example.com']])->get(new GenericFile('https://files/a.txt'));
+            $this->fail('A cached copy from a host that is not allowed was served.');
+        } catch (HostNotAllowedException $exception) {
+            $this->assertSame('files', $exception->host);
+        }
+
+        try {
+            $this->createCache(['allowed_disks' => ['test']])->get(new GenericFile('fixtures://test-file.txt'));
+            $this->fail('A cached copy from a disk that is not allowed was served.');
+        } catch (DiskNotAllowedException $exception) {
+            $this->assertSame('fixtures', $exception->disk);
+        }
+
+        // Serving a cached copy makes no request: the private address check
+        // guards requests only.
+        $this->assertSame('loopback', $this->createCache(['block_private_hosts' => true])->get(
+            new GenericFile('https://127.0.0.1/a.txt'),
+            fn ($file, $path) => file_get_contents($path)
+        ));
+        $this->assertFileExists($this->getCachedPath('https://files/a.txt'));
+    }
+
     public function testGetRemoteWithAllowedHostsValidation()
     {
         $file = new GenericFile('https://allowed.example.com/image.jpg');

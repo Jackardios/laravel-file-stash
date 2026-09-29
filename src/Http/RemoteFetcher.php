@@ -60,6 +60,16 @@ class RemoteFetcher
     }
 
     /**
+     * Check a URL against the allowed hosts without a request (cache hits).
+     *
+     * @throws HostNotAllowedException
+     */
+    public function ensureHostAllowed(File $file): void
+    {
+        $this->hostValidator->validateAllowedHost($file->getUrl());
+    }
+
+    /**
      * Check whether the remote file exists via a HEAD request.
      *
      * Only a definitive answer counts as "does not exist": a 3xx the

@@ -22,6 +22,18 @@ class HostValidatorTest extends TestCase
         $validator->validate('https://evil.com/image.jpg');
     }
 
+    public function testValidateAllowedHostChecksTheListWithoutTheAddressCheck(): void
+    {
+        // Loopback and unresolvable hosts pass: no DNS, no private address check.
+        (new HostValidator(null, true))->validateAllowedHost('https://127.0.0.1/a');
+        (new HostValidator(['*.example.com', 'nonexistent.invalid'], true))->validateAllowedHost('https://nonexistent.invalid/a');
+        (new HostValidator(['*.example.com'], true))->validateAllowedHost('https://cdn.example.com/a');
+        $this->addToAssertionCount(3);
+
+        $this->expectException(HostNotAllowedException::class);
+        (new HostValidator(['*.example.com'], true))->validateAllowedHost('https://evil.com/a');
+    }
+
     public function testAllowedHostsWildcard(): void
     {
         $validator = new HostValidator(['*.example.com']);

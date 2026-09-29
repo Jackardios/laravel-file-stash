@@ -73,7 +73,7 @@ Cache layout inside `config['path']`: entry = `{sha256(url)}`; temp = `{sha256}.
 Config file: `src/config/file-stash.php`. Notable semantics:
 
 - `allowed_hosts`: `null`/`''` = all allowed (default!), `[]` = all blocked, list = whitelist with `*.` wildcards (also matching the root domain); non-empty input parsing to zero hosts throws. `block_private_hosts` additionally rejects special-purpose IPs via `IpRanges` (no DNS-rebinding protection).
-- `allowed_disks`: same `null`/`''`/`[]`/list semantics for the disk of `disk://path` URLs; checked in `getDisk()` → `DiskNotAllowedException extends HostNotAllowedException`.
+- `allowed_disks`: same `null`/`''`/`[]`/list semantics for the disk of `disk://path` URLs; checked in `getDisk()` → `DiskNotAllowedException extends HostNotAllowedException`. Both whitelists are also checked on cache hits (`retrieve()` → `ensureSourceAllowed()`, no DNS); `block_private_hosts`, MIME and size only when downloading.
 - `read_timeout` (`-1`/`0` = no limit): HTTP → curl low-speed abort (Guzzle exceptions, retried per `http_retries`); disk streams → `stream_set_timeout` (`SourceResourceTimedOutException`).
 - `timeout` default 300 s; `max_file_size` -1 = unlimited; `batch_chunk_size` -1 = no chunking.
 - Invalid values throw `InvalidConfigurationException`; `path` is required and absolute.
