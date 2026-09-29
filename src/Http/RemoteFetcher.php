@@ -345,12 +345,12 @@ class RemoteFetcher
      * These are set on every request, not as client defaults, so that an
      * injected client is still subject to the configured timeouts, the
      * redirect budget, and — most importantly — the on_redirect host
-     * validation; per-request options win over client
-     * config (Guzzle shallow-merges them). The `curl` and `allow_redirects`
-     * arrays would therefore REPLACE an injected client's own arrays, so
-     * they are merged explicitly: the client's other curl options and
-     * redirect settings (protocols, referer, ...) survive, and its own
-     * on_redirect callback runs after the host validation passed.
+     * validation; per-request options win over client config (Guzzle
+     * shallow-merges them). The `curl` and `allow_redirects` arrays would
+     * therefore REPLACE an injected client's own arrays, so they are merged
+     * explicitly: the client's other curl options and redirect settings
+     * (protocols, referer, ...) survive, and its own on_redirect callback
+     * runs after the host validation passed.
      *
      * `read_timeout` maps to curl's low-speed abort (CURLOPT_LOW_SPEED_*): the
      * transfer fails when it stalls below 1 byte/s for that many seconds (-1
