@@ -90,10 +90,6 @@ class FileStashFake extends FileStash implements Fake
      */
     protected function parallelTestingSuffix(): string
     {
-        if (! class_exists(ParallelTesting::class)) {
-            return '';
-        }
-
         try {
             $token = ParallelTesting::token();
         } catch (Throwable) {
@@ -137,30 +133,6 @@ class FileStashFake extends FileStash implements Fake
     public function path(): string
     {
         return $this->config['path'];
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function get(File $file, ?callable $callback = null, bool $throwOnLock = false)
-    {
-        $callback = $callback ?? static fn (File $file, string $path): string => $path;
-
-        return $this->batch([$file], function ($files, $paths) use ($callback) {
-            return $callback($files[0], $paths[0]);
-        }, $throwOnLock);
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function getOnce(File $file, ?callable $callback = null, bool $throwOnLock = false)
-    {
-        $callback = $callback ?? static fn (File $file, string $path): string => $path;
-
-        return $this->batchOnce([$file], function ($files, $paths) use ($callback) {
-            return $callback($files[0], $paths[0]);
-        }, $throwOnLock);
     }
 
     /**
