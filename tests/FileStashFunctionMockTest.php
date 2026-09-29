@@ -660,7 +660,7 @@ class FileStashFunctionMockTest extends TestCase
         $this->assertSame($content, file_get_contents($cachedPath));
     }
 
-    public function testEntryDeletedExternallyIsNotTouchedIntoAnEmptyFileAnotherReaderKeeps()
+    public function testEntryDeletedExternallyAfterFstatIsNotTouched()
     {
         $cache = $this->createCacheWithMockFixtures(['touch_interval' => 0]);
         $url = 'fixtures://test-file.txt';
@@ -670,7 +670,8 @@ class FileStashFunctionMockTest extends TestCase
         // The entry is deleted outside the lock protocol right after the
         // reader's fstat(). A touch() would create an empty file under its
         // name, and a second reader locking that file before the cleanup
-        // would keep it alive as a valid (empty) entry.
+        // would keep it alive as a valid (empty) entry: the path must not be
+        // touched once it no longer names the locked inode.
         $deleted = false;
         $this->getFunctionMock('Jackardios\\FileStash', 'fstat')->expects($this->atLeastOnce())
             ->willReturnCallback(function ($stream) use (&$deleted, $cachedPath) {
@@ -682,15 +683,7 @@ class FileStashFunctionMockTest extends TestCase
 
                 return $stat;
             });
-        $secondReader = null;
-        $this->getFunctionMock('Jackardios\\FileStash', 'touch')->expects($this->any())
-            ->willReturnCallback(function (string $path) use (&$secondReader): bool {
-                $touched = \touch($path);
-                $secondReader = fopen($path, 'rb');
-                flock($secondReader, LOCK_SH);
-
-                return $touched;
-            });
+        $this->getFunctionMock('Jackardios\\FileStash', 'touch')->expects($this->never());
 
         $content = $cache->get(new GenericFile($url), fn ($file, $path) => file_get_contents($path));
 
