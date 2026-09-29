@@ -23,7 +23,7 @@ class RedirectIntegrityTest extends ConcurrencyTestCase
 
         $results = $this->awaitWorkers([
             $this->spawnWorker(['op' => 'get', 'urls' => [$url]]),
-        ], 120.0);
+        ]);
 
         $result = $results[0];
         $this->assertTrue($result['ok'] ?? false, 'Worker failed: '.$result['_stdout'].$result['_stderr']);
@@ -55,7 +55,7 @@ class RedirectIntegrityTest extends ConcurrencyTestCase
                 'urls' => [$url],
                 'config' => ['max_file_size' => 4096],
             ]),
-        ], 120.0);
+        ]);
 
         $result = $results[0];
         $this->assertTrue($result['ok'] ?? false, 'Worker failed: '.$result['_stdout'].$result['_stderr']);

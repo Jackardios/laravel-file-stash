@@ -7,23 +7,22 @@
  *
  * Task shape:
  * {
- *   "op": "get" | "getOnce" | "batch" | "batchOnce" | "prune" | "clear" | "forget" | "exists",
+ *   "op": "get" | "getOnce" | "batch" | "prune" | "clear" | "forget",
  *   "urls": ["https://..."],
  *   "config": {"path": "/tmp/...", ...},
- *   "disks": {"name": {"driver": "local", "root": "/tmp/..."}},
  *   "iterations": 1,
  *   "callback_sleep_ms": 0,
- *   "nested": {"op": "forget" | "get" | "getOnce", "urls": ["https://..."]},
+ *   "forget_in_callback": ["https://..."],
  *   "ready_file": "/path",   // touched once the worker has booted
  *   "wait_for": "/path",     // start only once this file exists
  *   "until_exists": "/path", // repeat the op until this file exists (instead of "iterations")
  *   "iteration_sleep_ms": 0  // pause between iterations (10 with "until_exists")
  * }
  *
- * "nested" runs inside the batch/batchOnce callback (after the files are
- * described) and records each operation's return value plus whether the
- * entry still exists on disk right after the call. With "nested" set, each
- * batch iteration's result becomes {"files": [...], "nested": [...]}.
+ * "forget_in_callback" calls forget() inside the batch callback (after the
+ * files are described) and records its return value plus whether the entry
+ * still exists on disk right after the call. With it set, each batch
+ * iteration's result becomes {"files": [...], "forgotten": [...]}.
  *
  * Prints a single JSON document to stdout:
  * {"ok": true, "results": [...]} or {"ok": false, "error": {"class": "...", "message": "..."}}
@@ -59,10 +58,6 @@ Application::create(options: ['extra' => [
     'dont-discover' => ['*'],
 ]]);
 
-foreach (($task['disks'] ?? []) as $name => $diskConfig) {
-    config(["filesystems.disks.{$name}" => $diskConfig]);
-}
-
 $op = $task['op'] ?? 'get';
 $urls = $task['urls'] ?? [];
 $iterations = max(1, (int) ($task['iterations'] ?? 1));
@@ -86,44 +81,21 @@ $describeFile = static function (string $path) use ($callbackSleepMs): array {
 try {
     $cache = new FileStash($task['config'] ?? []);
     $results = [];
-    $isBatchStyle = in_array($op, ['batch', 'batchOnce', 'prune', 'clear'], true);
+    $isBatchStyle = in_array($op, ['batch', 'prune', 'clear'], true);
 
-    $nested = is_array($task['nested'] ?? null) ? $task['nested'] : null;
-    $runNested = static function () use ($cache, $nested, $task): ?array {
-        if ($nested === null) {
-            return null;
-        }
-
-        $out = [];
-        foreach (($nested['urls'] ?? []) as $url) {
-            $file = new GenericFile($url);
-            $entryPath = ($task['config']['path'] ?? '').'/'.hash('sha256', $url);
-
-            $out[] = match ($nested['op'] ?? 'forget') {
-                'forget' => [
-                    'forgotten' => $cache->forget($file),
-                    'exists_after' => file_exists($entryPath),
-                ],
-                'get' => [
-                    'result' => $cache->get($file, fn ($f, $p) => hash_file('sha256', $p)),
-                    'exists_after' => file_exists($entryPath),
-                ],
-                'getOnce' => [
-                    'result' => $cache->getOnce($file, fn ($f, $p) => hash_file('sha256', $p)),
-                    'exists_after' => file_exists($entryPath),
-                ],
-                default => throw new InvalidArgumentException('Unknown nested op'),
-            };
-        }
-
-        return $out;
-    };
-
-    $batchCallback = static function ($files, $paths) use ($describeFile, $runNested) {
+    $forgetInCallback = $task['forget_in_callback'] ?? null;
+    $batchCallback = static function ($files, $paths) use ($cache, $describeFile, $forgetInCallback, $task) {
         $described = array_map($describeFile, $paths);
-        $nestedResults = $runNested();
+        if ($forgetInCallback === null) {
+            return $described;
+        }
 
-        return $nestedResults === null ? $described : ['files' => $described, 'nested' => $nestedResults];
+        $forgotten = array_map(static fn (string $url): array => [
+            'forgotten' => $cache->forget(new GenericFile($url)),
+            'exists_after' => file_exists($task['config']['path'].'/'.hash('sha256', $url)),
+        ], $forgetInCallback);
+
+        return ['files' => $described, 'forgotten' => $forgotten];
     };
 
     if (isset($task['ready_file'])) {
@@ -148,10 +120,6 @@ try {
                     array_map(fn ($url) => new GenericFile($url), $urls),
                     $batchCallback
                 ),
-                'batchOnce' => $cache->batchOnce(
-                    array_map(fn ($url) => new GenericFile($url), $urls),
-                    $batchCallback
-                ),
                 'prune' => $cache->prune(),
                 'clear' => (static function () use ($cache) {
                     $cache->clear();
@@ -170,7 +138,6 @@ try {
                 'get' => $cache->get($file, fn ($f, $path) => $describeFile($path)),
                 'getOnce' => $cache->getOnce($file, fn ($f, $path) => $describeFile($path)),
                 'forget' => ['forgotten' => $cache->forget($file)],
-                'exists' => ['exists' => $cache->exists($file)],
                 default => throw new InvalidArgumentException("Unknown op: {$op}"),
             };
         }

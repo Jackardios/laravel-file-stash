@@ -25,7 +25,7 @@ class StreamingSizeLimitTest extends ConcurrencyTestCase
                 'urls' => [$server['base_url'].'/unbounded.bin?chunks=200&delay_ms=20&no_length=1'],
                 'config' => ['max_file_size' => 4096],
             ]),
-        ], 120.0);
+        ]);
 
         $result = $results[0];
         $this->assertFalse($result['ok'] ?? true, 'The download must fail: '.$result['_stdout']);

@@ -67,7 +67,7 @@ abstract class ConcurrencyTestCase extends TestCase
     /**
      * Start the deterministic slow HTTP server.
      *
-     * @return array{host: string, port: int, base_url: string, counter_file: string}
+     * @return array{base_url: string, counter_file: string}
      */
     protected function startSlowServer(int $phpWorkers = 4): array
     {
@@ -115,8 +115,6 @@ abstract class ConcurrencyTestCase extends TestCase
             $this->serverHandles[] = ['proc' => $proc, 'pipes' => $pipes];
 
             return [
-                'host' => '127.0.0.1',
-                'port' => $port,
                 'base_url' => $baseUrl,
                 'counter_file' => $counterFile,
             ];
@@ -151,7 +149,7 @@ abstract class ConcurrencyTestCase extends TestCase
      * Spawn a worker process executing a FileStash operation.
      *
      * @param  array<string, mixed>  $task  See tests/Concurrency/fixtures/worker.php
-     * @return array{proc: resource, pipes: array<int, resource>, pid: int}
+     * @return array{proc: resource, pipes: array<int, resource>}
      */
     protected function spawnWorker(array $task): array
     {
@@ -172,9 +170,8 @@ abstract class ConcurrencyTestCase extends TestCase
         }
 
         $this->workerProcs[] = $proc;
-        $status = proc_get_status($proc);
 
-        return ['proc' => $proc, 'pipes' => $pipes, 'pid' => $status['pid']];
+        return ['proc' => $proc, 'pipes' => $pipes];
     }
 
     /**
@@ -184,8 +181,8 @@ abstract class ConcurrencyTestCase extends TestCase
      * defaultTimeLimit (60 s): past that PHPUnit kills the test without the
      * workers' stderr.
      *
-     * @param  array<int, array{proc: resource, pipes: array<int, resource>, pid: int}>  $workers
-     * @return array<int, array{ok?: bool, results?: array<int, mixed>, error?: array{class: string, message: string}, _stdout: string, _stderr: string, _exit: int}>
+     * @param  array<int, array{proc: resource, pipes: array<int, resource>}>  $workers
+     * @return array<int, array{ok?: bool, results?: array<int, mixed>, error?: array{class: string, message: string}, _stdout: string, _stderr: string}>
      */
     protected function awaitWorkers(array $workers, float $timeoutSeconds = 45.0): array
     {
@@ -221,13 +218,12 @@ abstract class ConcurrencyTestCase extends TestCase
 
             fclose($worker['pipes'][1]);
             fclose($worker['pipes'][2]);
-            $exitCode = proc_close($worker['proc']);
+            proc_close($worker['proc']);
 
             $decoded = json_decode($stdout, true);
             $result = is_array($decoded) ? $decoded : [];
             $result['_stdout'] = $stdout;
             $result['_stderr'] = $stderr;
-            $result['_exit'] = $exitCode;
 
             $results[$index] = $result;
         }

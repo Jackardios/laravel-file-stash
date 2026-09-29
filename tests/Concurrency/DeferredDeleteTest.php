@@ -26,19 +26,19 @@ class DeferredDeleteTest extends ConcurrencyTestCase
             $this->spawnWorker([
                 'op' => 'batch',
                 'urls' => $urls,
-                'nested' => ['op' => 'forget', 'urls' => [$urls[0]]],
+                'forget_in_callback' => [$urls[0]],
                 // Chunked mode: per-file locks are released before the
                 // callback, only the pin lock protects the entries.
                 'config' => ['batch_chunk_size' => 1],
             ]),
-        ], 120.0);
+        ]);
 
         $result = $results[0];
         $this->assertTrue($result['ok'] ?? false, 'Worker failed: '.$result['_stdout'].$result['_stderr']);
 
-        $nested = $result['results'][0]['nested'][0];
-        $this->assertTrue($nested['forgotten'], 'forget() inside a batch callback must report the scheduled deletion.');
-        $this->assertTrue($nested['exists_after'], 'The entry must survive the whole batch callback.');
+        $inCallback = $result['results'][0]['forgotten'][0];
+        $this->assertTrue($inCallback['forgotten'], 'forget() inside a batch callback must report the scheduled deletion.');
+        $this->assertTrue($inCallback['exists_after'], 'The entry must survive the whole batch callback.');
 
         // After the worker finished (batch + flush): the forgotten entry is
         // gone, the untouched entries remain.
@@ -68,7 +68,7 @@ class DeferredDeleteTest extends ConcurrencyTestCase
 
         [$once] = $this->awaitWorkers([
             $this->spawnWorker(['op' => 'getOnce', 'urls' => [$onceUrl], 'config' => ['lifecycle_lock_timeout' => 30]]),
-        ], 60.0);
+        ]);
 
         $this->assertTrue($once['ok'] ?? false, 'Worker failed: '.$once['_stdout'].$once['_stderr']);
         $this->assertTrue(
@@ -91,7 +91,7 @@ class DeferredDeleteTest extends ConcurrencyTestCase
         $batchWorker = $this->spawnWorker([
             'op' => 'batch',
             'urls' => [$urlX, $urlY],
-            'nested' => ['op' => 'forget', 'urls' => [$urlX]],
+            'forget_in_callback' => [$urlX],
             'callback_sleep_ms' => 100,
         ]);
 
