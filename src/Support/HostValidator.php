@@ -11,6 +11,13 @@ use Jackardios\FileStash\Exceptions\HostNotAllowedException;
 final class HostValidator
 {
     /**
+     * Canonical allowed hosts; null = all hosts allowed.
+     *
+     * @var array<int, string>|null
+     */
+    private readonly ?array $allowedHosts;
+
+    /**
      * @param  array<int, string>|null  $allowedHosts  Null = all hosts allowed,
      *                                                 empty array = all hosts blocked. Entries may start with `*.` to
      *                                                 match subdomains (the root domain matches too).
@@ -18,9 +25,13 @@ final class HostValidator
      *                                   reserved addresses.
      */
     public function __construct(
-        private readonly ?array $allowedHosts,
+        ?array $allowedHosts,
         private readonly bool $blockPrivateHosts = false,
-    ) {}
+    ) {
+        $this->allowedHosts = $allowedHosts === null
+            ? null
+            : array_map(static fn (string $host): string => IpRanges::canonicalizeHost(trim($host)), $allowedHosts);
+    }
 
     /**
      * Validate that a URL's host passes the configured restrictions.
@@ -51,8 +62,6 @@ final class HostValidator
         }
 
         foreach ($this->allowedHosts as $allowedHost) {
-            $allowedHost = IpRanges::canonicalizeHost(trim($allowedHost));
-
             if ($host === $allowedHost) {
                 return;
             }
