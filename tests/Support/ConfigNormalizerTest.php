@@ -185,6 +185,11 @@ class ConfigNormalizerTest extends TestCase
             'max_size negative' => ['max_size', -1],
             'lock_max_attempts zero' => ['lock_max_attempts', 0],
             'lock_wait_timeout below -1' => ['lock_wait_timeout', -2],
+            'timeout below -1' => ['timeout', -2],
+            'connect_timeout below -1' => ['connect_timeout', -2],
+            'read_timeout below -1' => ['read_timeout', -2],
+            'prune_timeout below -1' => ['prune_timeout', -2],
+            'lifecycle_lock_timeout below -1' => ['lifecycle_lock_timeout', -2],
             // fractional values in (-1, 0) must not silently mean "unlimited"
             'lock_wait_timeout fractional negative' => ['lock_wait_timeout', -0.5],
             'timeout fractional negative' => ['timeout', -0.5],
@@ -224,10 +229,6 @@ class ConfigNormalizerTest extends TestCase
         ];
     }
 
-    // -------------------------------------------------------------------------
-    // booleans
-    // -------------------------------------------------------------------------
-
     public function testTimeoutSentinelAndNonNegativeValuesAccepted(): void
     {
         foreach (['lock_wait_timeout', 'timeout', 'connect_timeout', 'read_timeout', 'lifecycle_lock_timeout'] as $key) {
@@ -237,6 +238,10 @@ class ConfigNormalizerTest extends TestCase
             $this->assertSame(1.5, $this->normalize([$key => 1.5])[$key], $key);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // booleans
+    // -------------------------------------------------------------------------
 
     public function testBooleanStringsAreAccepted(): void
     {

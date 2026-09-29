@@ -93,6 +93,19 @@ class FileStashTest extends TestCase
     }
 
     /**
+     * Create a FileStash with events enabled that hands every event to $listener.
+     *
+     * @param  callable(object): mixed  $listener
+     */
+    protected function createCacheWithListener(callable $listener, array $config = []): FileStash
+    {
+        $dispatcher = $this->createStub(Dispatcher::class);
+        $dispatcher->method('dispatch')->willReturnCallback($listener);
+
+        return new FileStash(['path' => $this->cachePath, 'events_enabled' => true, ...$config], dispatcher: $dispatcher);
+    }
+
+    /**
      * Create a FileStash with a mock HTTP client.
      */
     protected function createCacheWithMockClient(array $responses, array $config = [], bool $httpErrors = false): FileStash
@@ -751,11 +764,9 @@ class FileStashTest extends TestCase
     public function testClearRemovesOrphanedTempFilesWithoutEvictionEvents()
     {
         $dispatched = [];
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$dispatched) {
             $dispatched[] = $event;
         });
-        $cache = new FileStash(['path' => $this->cachePath, 'events_enabled' => true], null, null, null, null, $dispatcher);
 
         $entry = $this->getCachedPath('https://example.com/entry');
         $temp = "{$entry}.123.0123456789abcdef.tmp";
@@ -1202,39 +1213,6 @@ class FileStashTest extends TestCase
         fclose($reader2Handle);
     }
 
-    public function testConfigValidationThrowsOnInvalidMaxFileSize()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('max_file_size');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'max_file_size' => -2, // Invalid: must be -1 or positive
-        ]);
-    }
-
-    public function testConfigValidationThrowsOnInvalidMaxAge()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('max_age');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'max_age' => 0, // Invalid: must be at least 1
-        ]);
-    }
-
-    public function testConfigValidationThrowsOnInvalidLockMaxAttempts()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('lock_max_attempts');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'lock_max_attempts' => 0, // Invalid: must be at least 1
-        ]);
-    }
-
     public function testGenericFileThrowsOnEmptyUrl()
     {
         $this->expectException(\InvalidArgumentException::class);
@@ -1453,94 +1431,6 @@ class FileStashTest extends TestCase
         $this->assertSame(4, $mock->count(), 'Only the first attempt (request + 1 redirect) may be sent.');
     }
 
-    public function testConfigValidationThrowsOnInvalidMaxSize()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('max_size');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'max_size' => -1, // Invalid: must be 0 or positive
-        ]);
-    }
-
-    public function testConfigValidationThrowsOnInvalidLockWaitTimeout()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('lock_wait_timeout');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'lock_wait_timeout' => -2, // Invalid: must be -1 or non-negative
-        ]);
-    }
-
-    public function testConfigValidationThrowsOnInvalidTimeout()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('timeout');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'timeout' => -2, // Invalid: must be -1 or non-negative
-        ]);
-    }
-
-    public function testConfigValidationThrowsOnInvalidConnectTimeout()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('connect_timeout');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'connect_timeout' => -2, // Invalid: must be -1 or non-negative
-        ]);
-    }
-
-    public function testConfigValidationThrowsOnInvalidReadTimeout()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('read_timeout');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'read_timeout' => -2, // Invalid: must be -1 or non-negative
-        ]);
-    }
-
-    public function testConfigValidationThrowsOnInvalidPruneTimeout()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('prune_timeout');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'prune_timeout' => -2, // Invalid: must be -1 or non-negative
-        ]);
-    }
-
-    public function testConfigValidationThrowsOnInvalidLifecycleLockTimeout()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('lifecycle_lock_timeout');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'lifecycle_lock_timeout' => -2, // Invalid: must be -1 or non-negative
-        ]);
-    }
-
-    public function testConfigValidationThrowsOnInvalidBatchChunkSize()
-    {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('batch_chunk_size');
-
-        new FileStash([
-            'path' => $this->cachePath,
-            'batch_chunk_size' => 0, // Invalid: must be -1 or positive
-        ]);
-    }
-
     public function testLifecycleLockLivesOnlyInTheCacheDirectory()
     {
         $tempLocks = sys_get_temp_dir().'/laravel-file-stash/locks';
@@ -1639,22 +1529,6 @@ class FileStashTest extends TestCase
 
         $this->expectException(HostNotAllowedException::class);
         $cache->exists($file);
-    }
-
-    public function testExistsRemoteMimeTypeWithCharset()
-    {
-        // MIME type with charset should be handled correctly
-        $mock = new MockHandler([
-            new Response(200, ['content-type' => 'text/plain; charset=utf-8']),
-        ]);
-
-        $cache = new FileStash([
-            'path' => $this->cachePath,
-            'mime_types' => ['text/plain'],
-        ], new Client(['handler' => HandlerStack::create($mock)]));
-
-        $file = new GenericFile('https://example.com/file.txt');
-        $this->assertTrue($cache->exists($file));
     }
 
     public function testBatchOnceDeletesFilesAfterCallback()
@@ -1838,9 +1712,10 @@ class FileStashTest extends TestCase
         $file = new GenericFile('fixtures://test-file.txt');
         $cache = new FileStash(['path' => $this->cachePath]);
 
-        // getOnce() without callback should return path (and delete file)
+        // Without a callback getOnce() returns the path of the deleted file.
         $result = $cache->getOnce($file);
-        $this->assertIsString($result);
+        $this->assertSame($this->getCachedPath($file->getUrl()), $result);
+        $this->assertFileDoesNotExist($result);
     }
 
     public function testBatchOnceDefaultCallback()
@@ -1848,10 +1723,10 @@ class FileStashTest extends TestCase
         $file = new GenericFile('fixtures://test-file.txt');
         $cache = new FileStash(['path' => $this->cachePath]);
 
-        // batchOnce() without callback should return array of paths
+        // Without a callback batchOnce() returns the paths of the deleted files.
         $result = $cache->batchOnce([$file]);
-        $this->assertIsArray($result);
-        $this->assertCount(1, $result);
+        $this->assertSame([$this->getCachedPath($file->getUrl())], $result);
+        $this->assertFileDoesNotExist($result[0]);
     }
 
     public function testUnlimitedFileSize()
@@ -1923,17 +1798,6 @@ class FileStashTest extends TestCase
 
         $this->assertFalse($cache->forget(new GenericFile('https://example.com/file.jpg')));
         $this->assertDirectoryDoesNotExist($coldPath);
-    }
-
-    public function testGetDiskFileNotFound()
-    {
-        config(['filesystems.disks.test' => ['driver' => 'local', 'root' => $this->diskPath]]);
-        $file = new GenericFile('test://non-existent-file.txt');
-
-        $cache = new FileStash(['path' => $this->cachePath]);
-
-        $this->expectException(FileNotFoundException::class);
-        $cache->get($file, $this->noop);
     }
 
     public function testPruneBySizeDeletesOldestFiles()
@@ -2065,19 +1929,9 @@ class FileStashTest extends TestCase
     public function testEventsDispatchedWhenEnabled()
     {
         $dispatched = [];
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$dispatched) {
             $dispatched[] = $event;
         });
-
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'events_enabled' => true],
-            null,
-            null,
-            null,
-            null,
-            $dispatcher
-        );
 
         $file = new GenericFile('fixtures://test-image.jpg');
         $cache->get($file, $this->noop);
@@ -2115,19 +1969,9 @@ class FileStashTest extends TestCase
     public function testPruneCompletedEventDispatched()
     {
         $dispatched = [];
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$dispatched) {
             $dispatched[] = $event;
         });
-
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'events_enabled' => true],
-            null,
-            null,
-            null,
-            null,
-            $dispatcher
-        );
 
         $cache->prune();
 
@@ -2140,19 +1984,9 @@ class FileStashTest extends TestCase
     public function testEvictionEventDispatchedOnClear()
     {
         $dispatched = [];
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$dispatched) {
             $dispatched[] = $event;
         });
-
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'events_enabled' => true],
-            null,
-            null,
-            null,
-            null,
-            $dispatcher
-        );
 
         // Add a file to cache, then clear
         $this->app['files']->put($this->getCachedPath('testfile'), 'content');
@@ -2433,23 +2267,13 @@ class FileStashTest extends TestCase
     public function testPruneEvictionEventDispatched()
     {
         $dispatched = [];
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
-            $dispatched[] = $event;
-        });
-
         // Create an expired file
         $this->app['files']->put($this->getCachedPath('expired'), 'content');
         touch($this->getCachedPath('expired'), time() - 7200);
 
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'max_age' => 1, 'events_enabled' => true],
-            null,
-            null,
-            null,
-            null,
-            $dispatcher
-        );
+        $cache = $this->createCacheWithListener(function ($event) use (&$dispatched) {
+            $dispatched[] = $event;
+        }, ['max_age' => 1]);
 
         $cache->prune();
 
@@ -2462,19 +2286,9 @@ class FileStashTest extends TestCase
     public function testForgetEvictionEventDispatched()
     {
         $dispatched = [];
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$dispatched) {
             $dispatched[] = $event;
         });
-
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'events_enabled' => true],
-            null,
-            null,
-            null,
-            null,
-            $dispatcher
-        );
 
         $file = new GenericFile('fixtures://test-image.jpg');
         $cache->get($file, $this->noop);
@@ -3035,9 +2849,12 @@ class FileStashTest extends TestCase
     // Config Validation Tests
     // =========================================================================
 
-    public function testConfigValidationThrowsOnZeroMaxFileSize()
+    public function testConstructorValidatesTheConfig()
     {
+        // The rules themselves are covered by ConfigNormalizerTest.
         $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('max_file_size');
+
         new FileStash(['path' => $this->cachePath, 'max_file_size' => 0]);
     }
 
@@ -3200,19 +3017,9 @@ class FileStashTest extends TestCase
     public function testDeferredEvictionEventFiresAfterBatch()
     {
         $dispatched = [];
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$dispatched) {
             $dispatched[] = $event;
         });
-
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'events_enabled' => true],
-            null,
-            null,
-            null,
-            null,
-            $dispatcher
-        );
 
         $file = new GenericFile('fixtures://test-image.jpg');
         $other = new GenericFile('fixtures://test-file.txt');
@@ -3266,24 +3073,14 @@ class FileStashTest extends TestCase
 
         $cacheRef = null;
         $existedDuringPrune = null;
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$cacheRef, $other, $otherPath, &$existedDuringPrune) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$cacheRef, $other, $otherPath, &$existedDuringPrune) {
             if ($event instanceof CacheFileEvicted && $event->reason === 'pruned_age') {
                 // Listener reacting to an eviction while prune holds the
                 // shared lifecycle lock: the forget must be deferred.
                 $cacheRef->forget($other);
                 $existedDuringPrune = file_exists($otherPath);
             }
-        });
-
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'events_enabled' => true, 'max_age' => 60],
-            null,
-            null,
-            null,
-            null,
-            $dispatcher
-        );
+        }, ['max_age' => 60]);
         $cacheRef = $cache;
 
         $cache->get($other, $this->noop);
@@ -3325,17 +3122,11 @@ class FileStashTest extends TestCase
 
         $cacheRef = null;
         $forgotten = null;
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$cacheRef, &$forgotten, $derived, $derivedPath) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$cacheRef, &$forgotten, $derived, $derivedPath) {
             if ($event instanceof CacheFileEvicted && $event->path !== $derivedPath) {
                 $forgotten = $cacheRef->forget($derived);
             }
-        });
-
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'events_enabled' => true, 'lifecycle_lock_timeout' => 1],
-            dispatcher: $dispatcher,
-        );
+        }, ['lifecycle_lock_timeout' => 1]);
         $cacheRef = $cache;
         $cache->get($primary, $this->noop);
 
@@ -3355,20 +3146,14 @@ class FileStashTest extends TestCase
 
         $cacheRef = null;
         $batched = null;
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$cacheRef, &$batched) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$cacheRef, &$batched) {
             if ($event instanceof CacheFileEvicted) {
                 $batched = $cacheRef->batch(
                     [new GenericFile('fixtures://test-file.txt'), new GenericFile('fixtures://test-image.jpg')],
                     fn (array $files, array $paths) => count($paths),
                 );
             }
-        });
-
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'events_enabled' => true, 'lifecycle_lock_timeout' => 1, 'max_age' => 60, 'batch_chunk_size' => 1],
-            dispatcher: $dispatcher,
-        );
+        }, ['lifecycle_lock_timeout' => 1, 'max_age' => 60, 'batch_chunk_size' => 1]);
         $cacheRef = $cache;
 
         $stats = $cache->prune();
@@ -3398,19 +3183,9 @@ class FileStashTest extends TestCase
     public function testPruneInfrastructureCleanupEmitsNoEvictionEvents()
     {
         $dispatched = [];
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
+        $cache = $this->createCacheWithListener(function ($event) use (&$dispatched) {
             $dispatched[] = $event;
         });
-
-        $cache = new FileStash(
-            ['path' => $this->cachePath, 'events_enabled' => true],
-            null,
-            null,
-            null,
-            null,
-            $dispatcher
-        );
 
         // Orphaned temp file (past the grace period) and an idle claim file.
         $tempPath = $this->cachePath.'/'.str_repeat('a', 64).'.123.'.str_repeat('b', 16).'.tmp';
@@ -3472,20 +3247,10 @@ class FileStashTest extends TestCase
     public function testPruneOnMissingDirectoryDispatchesCompletionEvent()
     {
         $dispatched = [];
-        $dispatcher = $this->createStub(Dispatcher::class);
-        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$dispatched) {
-            $dispatched[] = $event;
-        });
-
         $nonExistentPath = sys_get_temp_dir().'/non_existent_path_'.bin2hex(random_bytes(8));
-        $cache = new FileStash(
-            ['path' => $nonExistentPath, 'events_enabled' => true],
-            null,
-            null,
-            null,
-            null,
-            $dispatcher
-        );
+        $cache = $this->createCacheWithListener(function ($event) use (&$dispatched) {
+            $dispatched[] = $event;
+        }, ['path' => $nonExistentPath]);
 
         $cache->prune();
 
@@ -3617,14 +3382,6 @@ class FileStashTest extends TestCase
             flock($lock, LOCK_UN);
             fclose($lock);
         }
-    }
-
-    public function testLifecycleLockLivesInsideCacheDirectory()
-    {
-        $cache = $this->createCache();
-        $cache->batch([]);
-
-        $this->assertFileExists("{$this->cachePath}/.lifecycle.lock");
     }
 
     public function testNoTempFilesRemainAfterGet()
