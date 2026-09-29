@@ -342,10 +342,10 @@ class RemoteFetcher
     /**
      * Security- and correctness-critical options, applied per request.
      *
-     * These are set on every request (not only as client defaults in
-     * makeClient) so that an injected client is still subject to the
-     * configured timeouts, the redirect budget, and — most importantly — the
-     * on_redirect host validation; per-request options win over client
+     * These are set on every request, not as client defaults, so that an
+     * injected client is still subject to the configured timeouts, the
+     * redirect budget, and — most importantly — the on_redirect host
+     * validation; per-request options win over client
      * config (Guzzle shallow-merges them). The `curl` and `allow_redirects`
      * arrays would therefore REPLACE an injected client's own arrays, so
      * they are merged explicitly: the client's other curl options and

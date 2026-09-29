@@ -268,6 +268,7 @@ class FileStash implements FileStashContract
      * @throws MimeTypeIsNotAllowedException
      * @throws FileLockedException
      * @throws FailedToRetrieveFileException
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
      * @throws LifecycleLockTimeoutException
      */
     public function get(File $file, ?callable $callback = null, bool $throwOnLock = false)
@@ -292,6 +293,7 @@ class FileStash implements FileStashContract
      * @throws MimeTypeIsNotAllowedException
      * @throws FileLockedException
      * @throws FailedToRetrieveFileException
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
      * @throws LifecycleLockTimeoutException
      */
     public function getOnce(File $file, ?callable $callback = null, bool $throwOnLock = false)
@@ -318,6 +320,7 @@ class FileStash implements FileStashContract
      * @throws MimeTypeIsNotAllowedException
      * @throws FileLockedException
      * @throws FailedToRetrieveFileException
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
      * @throws LifecycleLockTimeoutException
      */
     public function batch(array $files, ?callable $callback = null, bool $throwOnLock = false)
@@ -464,6 +467,7 @@ class FileStash implements FileStashContract
      * @throws MimeTypeIsNotAllowedException
      * @throws FileLockedException
      * @throws FailedToRetrieveFileException
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
      * @throws LifecycleLockTimeoutException
      */
     public function batchOnce(array $files, ?callable $callback = null, bool $throwOnLock = false)
@@ -1123,9 +1127,8 @@ class FileStash implements FileStashContract
     }
 
     /**
-     * Cache a remote or cloud storage file if it is not cached and get the path to
-     * the cached file. If the file is local, nothing will be done and the path to the
-     * local file will be returned.
+     * Get the cached file, downloading it from its source first when it is
+     * not cached yet.
      *
      * @return RetrievedFile Containing the 'path' to the file and the file 'stream'. Close the stream when finished.
      *
@@ -1137,6 +1140,7 @@ class FileStash implements FileStashContract
      * @throws MimeTypeIsNotAllowedException
      * @throws FileLockedException
      * @throws FailedToRetrieveFileException
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
      */
     protected function retrieve(File $file, bool $throwOnLock = false): array
     {
@@ -1254,7 +1258,7 @@ class FileStash implements FileStashContract
      * competing worker published while we waited, or download it ourselves.
      *
      * @return RetrievedFile|null Null when the claim could not be acquired in
-     *                            time or the published entry vanished — the caller retries.
+     *                            time — the caller retries.
      */
     protected function claimAndCreate(File $file, string $cachedPath, bool $throwOnLock): ?array
     {

@@ -14,11 +14,11 @@ interface FileStash
 {
     /**
      * Perform a callback with the path of a cached file. This takes care of shared
-     * locks on the cached file files, so it is not corrupted due to concurrent write
+     * locks on the cached file, so it is not corrupted due to concurrent write
      * operations.
      *
      * @param  (callable(File, string): mixed)|null  $callback  Gets the file object and the path to the cached file
-     *                                                          file as arguments.
+     *                                                          as arguments.
      * @param  bool  $throwOnLock  Whether to throw an exception if a file is currently locked (i.e. written to). Otherwise the method will wait until the lock is released.
      * @return mixed Result of the callback.
      *
@@ -39,7 +39,7 @@ interface FileStash
      * eviction should be conditional.
      *
      * @param  (callable(File, string): mixed)|null  $callback  Gets the file object and the path to the cached file
-     *                                                          file as arguments.
+     *                                                          as arguments.
      * @param  bool  $throwOnLock  Whether to throw an exception if a file is currently locked (i.e. written to). Otherwise the method will wait until the lock is released.
      * @return mixed Result of the callback.
      *
@@ -54,7 +54,7 @@ interface FileStash
      *
      * @param  File[]  $files
      * @param  (callable(File[], string[]): mixed)|null  $callback  Gets the array of file objects and the array of paths
-     *                                                              to the cached file files (in the same ordering) as arguments.
+     *                                                              to the cached files (in the same ordering) as arguments.
      * @param  bool  $throwOnLock  Whether to throw an exception if a file is currently locked (i.e. written to). Otherwise the method will wait until the lock is released.
      * @return mixed Result of the callback.
      *
@@ -73,7 +73,7 @@ interface FileStash
      *
      * @param  File[]  $files
      * @param  (callable(File[], string[]): mixed)|null  $callback  Gets the array of file objects and the array of paths
-     *                                                              to the cached file files (in the same ordering) as arguments.
+     *                                                              to the cached files (in the same ordering) as arguments.
      * @param  bool  $throwOnLock  Whether to throw an exception if a file is currently locked (i.e. written to). Otherwise the method will wait until the lock is released.
      * @return mixed Result of the callback.
      *
