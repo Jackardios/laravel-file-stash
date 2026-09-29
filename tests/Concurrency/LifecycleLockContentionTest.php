@@ -26,26 +26,31 @@ class LifecycleLockContentionTest extends ConcurrencyTestCase
             $paths
         );
 
-        $batchWorkers = [
-            $this->spawnWorker([
-                'op' => 'batch',
-                'urls' => $urls,
-                'iterations' => 4,
-                'callback_sleep_ms' => 100,
-                'config' => ['batch_chunk_size' => -1],
-            ]),
-            $this->spawnWorker([
-                'op' => 'batch',
-                'urls' => $urls,
-                'iterations' => 4,
-                'callback_sleep_ms' => 100,
-                'config' => ['batch_chunk_size' => -1],
-            ]),
-        ];
-        $clearWorker = $this->spawnWorker(['op' => 'clear', 'iterations' => 3]);
+        // clear() loops from before the batches start until they are done.
+        $clearReady = $this->cachePath.'/.clear-ready';
+        $batchesDone = $this->cachePath.'/.batches-done';
+        $clearWorker = $this->spawnWorker([
+            'op' => 'clear',
+            'ready_file' => $clearReady,
+            'until_exists' => $batchesDone,
+        ]);
 
-        $results = $this->awaitWorkers(array_merge($batchWorkers, [$clearWorker]));
-        $clearResult = array_pop($results);
+        $batchTask = [
+            'op' => 'batch',
+            'urls' => $urls,
+            'iterations' => 4,
+            'callback_sleep_ms' => 100,
+            // Both batches start together and pause together: clear() gets
+            // its exclusive lock in the gap and forces re-downloads.
+            'iteration_sleep_ms' => 200,
+            'config' => ['batch_chunk_size' => -1],
+            'wait_for' => $clearReady,
+        ];
+        $batchWorkers = [$this->spawnWorker($batchTask), $this->spawnWorker($batchTask)];
+
+        $results = $this->awaitWorkers($batchWorkers);
+        touch($batchesDone);
+        [$clearResult] = $this->awaitWorkers([$clearWorker]);
 
         foreach ($results as $index => $result) {
             $this->assertTrue($result['ok'] ?? false, "Batch worker #{$index} failed: ".$result['_stdout'].$result['_stderr']);
@@ -62,6 +67,11 @@ class LifecycleLockContentionTest extends ConcurrencyTestCase
         }
 
         $this->assertTrue($clearResult['ok'] ?? false, 'Clear worker failed: '.$clearResult['_stdout'].$clearResult['_stderr']);
+        $this->assertGreaterThan(
+            count($urls),
+            $this->serverRequestCount($server['counter_file'], 'GET'),
+            'clear() never ran between two batch iterations: the race did not happen.'
+        );
 
         $this->assertSame(
             [],

@@ -26,20 +26,26 @@ class PruneVsBatchTest extends ConcurrencyTestCase
             $paths
         );
 
-        $workers = [];
-        for ($i = 0; $i < 4; $i++) {
-            $workers[] = $this->spawnWorker(['op' => 'get', 'urls' => $urls, 'iterations' => 6]);
-        }
         // max_size=1 makes every unlocked entry an LRU eviction candidate on
-        // each run, so prune constantly races the readers.
+        // each run; prune loops from before the readers start until they
+        // are done, so it constantly races them.
+        $pruneReady = $this->cachePath.'/.prune-ready';
+        $readersDone = $this->cachePath.'/.readers-done';
         $pruneWorker = $this->spawnWorker([
             'op' => 'prune',
-            'iterations' => 8,
             'config' => ['max_size' => 1],
+            'ready_file' => $pruneReady,
+            'until_exists' => $readersDone,
         ]);
 
-        $results = $this->awaitWorkers(array_merge($workers, [$pruneWorker]));
-        $pruneResult = array_pop($results);
+        $workers = [];
+        for ($i = 0; $i < 4; $i++) {
+            $workers[] = $this->spawnWorker(['op' => 'get', 'urls' => $urls, 'iterations' => 6, 'wait_for' => $pruneReady]);
+        }
+
+        $results = $this->awaitWorkers($workers);
+        touch($readersDone);
+        [$pruneResult] = $this->awaitWorkers([$pruneWorker]);
 
         foreach ($results as $index => $result) {
             $this->assertTrue($result['ok'] ?? false, "Reader #{$index} failed: ".$result['_stdout'].$result['_stderr']);
@@ -55,6 +61,11 @@ class PruneVsBatchTest extends ConcurrencyTestCase
         }
 
         $this->assertTrue($pruneResult['ok'] ?? false, 'Prune worker failed: '.$pruneResult['_stdout'].$pruneResult['_stderr']);
+        $this->assertGreaterThan(
+            count($urls),
+            $this->serverRequestCount($server['counter_file'], 'GET'),
+            'Prune never evicted an entry the readers then downloaded again: the race did not happen.'
+        );
     }
 
     /**

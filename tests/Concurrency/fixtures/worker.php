@@ -13,7 +13,11 @@
  *   "disks": {"name": {"driver": "local", "root": "/tmp/..."}},
  *   "iterations": 1,
  *   "callback_sleep_ms": 0,
- *   "nested": {"op": "forget" | "get" | "getOnce", "urls": ["https://..."]}
+ *   "nested": {"op": "forget" | "get" | "getOnce", "urls": ["https://..."]},
+ *   "ready_file": "/path",   // touched once the worker has booted
+ *   "wait_for": "/path",     // start only once this file exists
+ *   "until_exists": "/path", // repeat the op until this file exists (instead of "iterations")
+ *   "iteration_sleep_ms": 0  // pause between iterations (10 with "until_exists")
  * }
  *
  * "nested" runs inside the batch/batchOnce callback (after the files are
@@ -122,7 +126,22 @@ try {
         return $nestedResults === null ? $described : ['files' => $described, 'nested' => $nestedResults];
     };
 
-    for ($i = 0; $i < $iterations; $i++) {
+    if (isset($task['ready_file'])) {
+        touch($task['ready_file']);
+    }
+
+    $deadline = microtime(true) + 30;
+    while (isset($task['wait_for']) && ! file_exists($task['wait_for']) && microtime(true) < $deadline) {
+        usleep(5000);
+    }
+
+    $stopFile = $task['until_exists'] ?? null;
+    $iterationSleepMs = (int) ($task['iteration_sleep_ms'] ?? ($stopFile === null ? 0 : 10));
+    for ($i = 0; $stopFile === null ? $i < $iterations : ! file_exists($stopFile); $i++) {
+        if ($i > 0 && $iterationSleepMs > 0) {
+            usleep($iterationSleepMs * 1000);
+        }
+
         if ($isBatchStyle) {
             $results[] = match ($op) {
                 'batch' => $cache->batch(
