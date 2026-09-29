@@ -402,9 +402,22 @@ class FileStash implements FileStashContract
      */
     protected function acquirePinLock()
     {
+        return $this->lockPin(LOCK_SH);
+    }
+
+    /**
+     * Open the pin lock and take it, waiting up to lifecycle_lock_timeout.
+     *
+     * @param  int<0, 3>  $operation  LOCK_SH or LOCK_EX
+     * @return resource
+     *
+     * @throws LifecycleLockTimeoutException
+     */
+    private function lockPin(int $operation)
+    {
         $pin = LockManager::openLockFile($this->getPinLockPath());
 
-        if (! LockManager::flockWithTimeout($pin, LOCK_SH, $this->config['lifecycle_lock_timeout'])) {
+        if (! LockManager::flockWithTimeout($pin, $operation, $this->config['lifecycle_lock_timeout'])) {
             fclose($pin);
             throw LifecycleLockTimeoutException::create(
                 "Failed to acquire file cache pin lock within {$this->config['lifecycle_lock_timeout']} seconds."
@@ -956,15 +969,9 @@ class FileStash implements FileStashContract
      */
     protected function deleteUnusedEntries(array $paths, string $reason): array
     {
-        $pin = LockManager::openLockFile($this->getPinLockPath());
+        $pin = $this->lockPin(LOCK_EX);
 
         try {
-            if (! LockManager::flockWithTimeout($pin, LOCK_EX, $this->config['lifecycle_lock_timeout'])) {
-                throw LifecycleLockTimeoutException::create(
-                    "Failed to acquire file cache pin lock within {$this->config['lifecycle_lock_timeout']} seconds."
-                );
-            }
-
             $results = array_map(fn (string $path): DeleteResult => $this->unlinkLocked($path), $paths);
         } finally {
             fclose($pin);
