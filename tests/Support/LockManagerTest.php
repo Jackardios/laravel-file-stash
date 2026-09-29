@@ -44,7 +44,7 @@ class LockManagerTest extends TestCase
         return ['indefinite' => [-1.0], 'bounded' => [5.0]];
     }
 
-    public function testFlockWithTimeoutWaitsIndefinitelyForContendedLock(): void
+    public function testFlockWithTimeoutGivesUpOnAContendedLockAndTakesItOnceReleased(): void
     {
         $foreign = fopen($this->lockPath, 'c+');
         $this->assertTrue(flock($foreign, LOCK_EX | LOCK_NB));
@@ -208,15 +208,5 @@ class LockManagerTest extends TestCase
         $this->expectException(LogicException::class);
 
         LockManager::onOutermostRelease($this->lockPath, 1, fn () => null);
-    }
-
-    public function testFlockWithTimeoutNegativeTimeoutBlocksUntilAcquired(): void
-    {
-        $stream = fopen($this->lockPath, 'c+');
-
-        $this->assertTrue(LockManager::flockWithTimeout($stream, LOCK_EX, -1.0));
-
-        flock($stream, LOCK_UN);
-        fclose($stream);
     }
 }
