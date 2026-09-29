@@ -59,6 +59,13 @@ class FileStash implements FileStashContract
     protected const TEMP_GRACE_SECONDS = 60;
 
     /**
+     * Seconds prune() waits for the pin lock before each eviction. Other
+     * deletions hold it exclusively only while unlinking and are waited
+     * out; a chunked batch holds it shared for its whole callback.
+     */
+    private const PRUNE_PIN_WAIT_SECONDS = 1.0;
+
+    /**
      * Basename pattern of cache entries ({sha256}).
      */
     protected const ENTRY_FILE_PATTERN = '/^[0-9a-f]{64}$/';
@@ -691,14 +698,16 @@ class FileStash implements FileStashContract
      * Chunked batches release their per-file locks before the callback and
      * hold the pin lock shared instead; prune() takes it exclusively around
      * every single deletion, so a batch starting mid-prune only waits for
-     * one deletion, and prune stops evicting as soon as a batch holds it.
+     * one deletion, and prune stops evicting once the pin lock stays busy
+     * for PRUNE_PIN_WAIT_SECONDS. Other deletions (forget(), the getOnce()
+     * cleanup) hold it only briefly and must not stop prune.
      *
      * @param  resource  $pin
      * @return DeleteResult|null Null when a chunked batch holds the pin lock.
      */
     protected function evict($pin, string $path, int $atime, string $reason): ?DeleteResult
     {
-        if (! flock($pin, LOCK_EX | LOCK_NB)) {
+        if (! LockManager::flockWithTimeout($pin, LOCK_EX, self::PRUNE_PIN_WAIT_SECONDS)) {
             $this->logger->info('Prune stopped evicting: a chunked batch is using the cache.', [
                 'path' => $this->config['path'],
             ]);

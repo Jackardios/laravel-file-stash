@@ -692,6 +692,44 @@ class FileStashFunctionMockTest extends TestCase
         $this->assertSame($content, file_get_contents($cachedPath));
     }
 
+    public function testPruneWaitsOutABriefDeletionHoldingThePinLock()
+    {
+        $cache = $this->createCacheWithMockFixtures(['max_age' => 1]);
+        $stale = [];
+        foreach (['a', 'b', 'c'] as $name) {
+            $stale[] = $path = $this->getCachedPath("fixtures://{$name}");
+            file_put_contents($path, $name);
+            touch($path, time() - 120);
+        }
+
+        // forget() or a getOnce() cleanup of another worker holds the pin
+        // lock exclusively for a moment when prune reaches its first eviction.
+        $busy = true;
+        $flock = function ($stream, $operation, &$wouldBlock = null) use (&$busy) {
+            if ($busy && ($operation & LOCK_EX) !== 0 && str_ends_with(stream_get_meta_data($stream)['uri'], '/.pin.lock')) {
+                $busy = false;
+                $wouldBlock = 1;
+
+                return false;
+            }
+
+            return \flock($stream, $operation, $wouldBlock);
+        };
+        // flock() runs in both namespaces: LockManager and FileStash itself.
+        foreach (['Jackardios\\FileStash\\Support', 'Jackardios\\FileStash'] as $namespace) {
+            $this->getFunctionMock($namespace, 'flock')->expects($this->atLeastOnce())->willReturnCallback($flock);
+        }
+
+        $stats = $cache->prune();
+
+        $this->assertFalse($busy);
+        $this->assertTrue($stats['completed']);
+        $this->assertSame(3, $stats['deleted']);
+        foreach ($stale as $path) {
+            $this->assertFileDoesNotExist($path);
+        }
+    }
+
     public function testPruneTimeout()
     {
         for ($i = 0; $i < 5; $i++) {

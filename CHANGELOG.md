@@ -16,6 +16,11 @@ All notable changes to this package are documented in this file.
 - `allowed_hosts` and `allowed_disks` apply to cache hits as well. A copy
   cached by an instance with a wider policy on the same `path`, or before
   the policy was tightened, was served without the check.
+- `prune()` no longer stops evicting when another worker's `forget()` or
+  `getOnce()` cleanup holds the pin lock at that moment. It waits up to a
+  second for the lock; only a running chunked batch stops it. Under steady
+  `getOnce()` traffic prune often evicted nothing and reported a chunked
+  batch that did not exist.
 - `CacheFileEvicted` is dispatched after the pin lock is released. A
   listener that deletes from the cache (`forget()`, a chunked batch) used to
   wait for its own process until `lifecycle_lock_timeout` and give up.
