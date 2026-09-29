@@ -4,6 +4,13 @@ All notable changes to this package are documented in this file.
 
 ## v5.0.1 — Unreleased
 
+### Changed
+
+- Requires Laravel `^12.69.0 || ^13.30` (was `^12.61.1 || ^13.12`). The
+  security advisory PKSA-d5tc-s1qs-h781, published after v5.0.0, affects
+  `laravel/framework` below 12.69.0 and 13.0 to 13.29; Composer's default
+  `audit.block-insecure` already refused those versions.
+
 ### Fixed
 
 - `CacheFileEvicted` is dispatched after the pin lock is released. A

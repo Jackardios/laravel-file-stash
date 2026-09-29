@@ -17,7 +17,7 @@ cover everything that needs action.
 | | v4 | v5 |
 |---|---|---|
 | PHP | `^8.1` | `^8.3` |
-| Laravel | `^10 \|\| ^11 \|\| ^12` | `^12.61.1 \|\| ^13.12` |
+| Laravel | `^10 \|\| ^11 \|\| ^12` | `^12.69.0 \|\| ^13.30` |
 | Guzzle | `^7.0` | `^7.15.2 \|\| ^8.0.1` |
 
 Laravel 11 is not supported: its security-fix window closed before this

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Laravel package for fetching and caching files from HTTP(S) sources or Laravel storage disks, designed for concurrent processing with multiple parallel queue workers. Safety is built on `flock()`, atomic `rename()` publishing, and inode checks — the cache directory must live on a local POSIX filesystem (no NFS).
 
-**Supported versions:** PHP ^8.3, Laravel ^12.61.1 || ^13.12, Guzzle ^7.15.2 || ^8.0.1 (floors = oldest releases without security advisories). Laravel 10/11 users stay on v4 (`^4.0`). Windows is best-effort (fast suite only, experimental CI job).
+**Supported versions:** PHP ^8.3, Laravel ^12.69.0 || ^13.30, Guzzle ^7.15.2 || ^8.0.1 (floors = oldest releases without security advisories). Laravel 10/11 users stay on v4 (`^4.0`). Windows is best-effort (fast suite only, experimental CI job).
 
 ## Commands
 
@@ -92,4 +92,4 @@ Config file: `src/config/file-stash.php`. Notable semantics:
 
 ### CI
 
-`.github/workflows/tests.yml`: PHP 8.3–8.5 × Laravel 12/13 (+ Guzzle 8 on Laravel 13), paratest and sequential random order plus the concurrency suite; prefer-lowest on 8.3; PHPStan on the lowest and highest sets; Pint; `composer audit`; pcov coverage + Infection on PHP 8.4 (PECL has no pcov release for 8.5 yet); experimental Windows, PHP 8.6 (`--ignore-platform-req=php+`) and `laravel/framework:dev-master as 13.99.0` with `orchestra/testbench-core:12.x-dev as 11.99.0` (master's branch alias `13.0.x-dev` does not satisfy `^13.12`).
+`.github/workflows/tests.yml`: PHP 8.3–8.5 × Laravel 12/13 (+ Guzzle 8 on Laravel 13), paratest and sequential random order plus the concurrency suite; prefer-lowest on 8.3; PHPStan on the lowest and highest sets; Pint; `composer audit`; pcov coverage + Infection on PHP 8.4 (PECL has no pcov release for 8.5 yet); experimental Windows, PHP 8.6 (`--ignore-platform-req=php+`) and `laravel/framework:dev-master as 13.99.0` with `orchestra/testbench-core:12.x-dev as 11.99.0` (master's branch alias `13.0.x-dev` does not satisfy `^13.30`).

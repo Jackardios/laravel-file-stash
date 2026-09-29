@@ -90,7 +90,7 @@ Publish the config (optional):
 php artisan vendor:publish --tag=file-stash-config
 ```
 
-**Requirements:** PHP ^8.3, Laravel ^12.61.1 / ^13.12, Guzzle ^7.15.2 / ^8.0.1, a local POSIX filesystem (Linux, macOS; Windows is best-effort, see [Known Limitations](#known-limitations)). On Laravel 10/11 or PHP 8.1/8.2 use `^4.0`.
+**Requirements:** PHP ^8.3, Laravel ^12.69.0 / ^13.30, Guzzle ^7.15.2 / ^8.0.1, a local POSIX filesystem (Linux, macOS; Windows is best-effort, see [Known Limitations](#known-limitations)). On Laravel 10/11 or PHP 8.1/8.2 use `^4.0`.
 
 ---
 
