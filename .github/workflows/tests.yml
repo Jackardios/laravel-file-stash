@@ -5,13 +5,18 @@ on:
     branches:
       - master
   pull_request:
+  # Dependencies are not locked and the experimental jobs track upstream
+  # development branches: catch upstream breaks without a new commit.
+  schedule:
+    - cron: '0 5 * * 1'
 
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded pull request runs are cancelled; every master run finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   tests:
@@ -181,7 +186,7 @@ jobs:
           echo "24e9d2ab5fc5613be6b9fea99cfd2c689234d6e6053f339b8f5e05136246070a  $RUNNER_TEMP/infection.phar" | sha256sum -c -
 
       - name: Mutation testing
-        run: php "$RUNNER_TEMP/infection.phar" --coverage=build/coverage --skip-initial-tests --threads=max --no-progress --min-msi=97 --min-covered-msi=97
+        run: php "$RUNNER_TEMP/infection.phar" --coverage=build/coverage --skip-initial-tests --threads=max --no-progress
 
   experimental:
     runs-on: ${{ matrix.os }}

@@ -13,5 +13,7 @@
     // The concurrency suite spawns real processes and servers: far too slow
     // per mutant, and its code paths are covered by the fast suite.
     "testFrameworkOptions": "--exclude-group=concurrency",
-    "timeout": 30
+    "timeout": 30,
+    "minMsi": 97,
+    "minCoveredMsi": 97
 }
