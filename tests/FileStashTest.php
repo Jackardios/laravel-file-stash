@@ -929,6 +929,16 @@ class FileStashTest extends TestCase
         $this->assertFalse($cache->exists($file));
     }
 
+    public function testExistsRemoteReturnsFalseOnRedirectToUnsupportedProtocol()
+    {
+        // Guzzle refuses the redirect with a BadResponseException carrying the 3xx.
+        $cache = $this->createCacheWithMockClient([
+            new Response(302, ['Location' => 'ftp://example.com/file']),
+        ]);
+
+        $this->assertFalse($cache->exists(new GenericFile('https://example.com/file')));
+    }
+
     public function testExistsRemoteRetriesOnServerErrorWithHttpErrorsEnabled()
     {
         $file = new GenericFile('https://example.com/file');
@@ -2853,6 +2863,23 @@ class FileStashTest extends TestCase
 
         $this->assertFileDoesNotExist($this->getCachedPath($url));
         $this->assertSame([], glob($this->cachePath.'/*.tmp') ?: []);
+    }
+
+    public function testRedirectToUnsupportedProtocolFailsTheDownload()
+    {
+        $url = 'https://files/image.jpg';
+        $cache = $this->createCacheWithMockClient([
+            new Response(302, ['Location' => 'ftp://files/image.jpg']),
+        ], ['http_retries' => 1, 'http_retry_delay' => 1]);
+
+        try {
+            $cache->get(new GenericFile($url), $this->noop);
+            $this->fail('Expected FailedToRetrieveFileException to be thrown.');
+        } catch (FailedToRetrieveFileException $exception) {
+            $this->assertSame(302, $exception->statusCode);
+        }
+
+        $this->assertFileDoesNotExist($this->getCachedPath($url));
     }
 
     public function testInjectedClientReceivesSecurityOptionsPerRequest()

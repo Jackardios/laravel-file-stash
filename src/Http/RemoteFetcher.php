@@ -179,8 +179,7 @@ class RemoteFetcher
                 }
 
                 $statusCode = $this->extractStatusCode($exception);
-                if ($statusCode >= 400) {
-                    // http_errors=true clients throw for 4xx/5xx responses.
+                if ($statusCode > 0) {
                     throw FailedToRetrieveFileException::create(
                         "HTTP request failed with status code {$statusCode}",
                         previous: $exception,
@@ -224,8 +223,7 @@ class RemoteFetcher
             $response = $this->client()->head(Url::encode($file->getUrl()), $this->requestOptions());
         } catch (GuzzleException $exception) {
             $statusCode = $this->extractStatusCode($exception);
-            if ($statusCode >= 400) {
-                // http_errors=true clients throw for 4xx/5xx responses.
+            if ($statusCode > 0) {
                 throw FailedToRetrieveFileException::create(
                     "HTTP HEAD request failed with status code {$statusCode}",
                     previous: $exception,
@@ -303,8 +301,10 @@ class RemoteFetcher
     }
 
     /**
-     * Extract the HTTP status code of an HTTP error response (4xx/5xx from
-     * a client with http_errors=true), or 0 for anything else.
+     * Extract the HTTP status code of a response Guzzle rejected, or 0 for
+     * anything else: a 4xx/5xx from a client with http_errors=true, or a
+     * redirect the redirect middleware refuses to follow (e.g. to ftp://),
+     * which then fails like a final 3xx response.
      *
      * A transfer that broke after the headers arrived may carry the partial
      * response, but its status is not the reason for the failure: it counts

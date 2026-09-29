@@ -12,6 +12,10 @@ All notable changes to this package are documented in this file.
 - A reader no longer `touch()`es an entry that was deleted outside the lock
   protocol after it was opened. `touch()` recreated it as an empty file,
   and a second reader locking that file in time kept it as a valid entry.
+- A redirect Guzzle refuses to follow (e.g. to `ftp://`) no longer escapes
+  as a raw `BadResponseException`: `exists()` returns `false` and `get()`
+  throws `FailedToRetrieveFileException` with the 3xx status, like any other
+  redirect that does not end in a document.
 
 ## v5.0.0 — 2026-09-24
 
