@@ -2,6 +2,14 @@
 
 All notable changes to this package are documented in this file.
 
+## v5.0.1 — Unreleased
+
+### Fixed
+
+- `CacheFileEvicted` is dispatched after the pin lock is released. A
+  listener that deletes from the cache (`forget()`, a chunked batch) used to
+  wait for its own process until `lifecycle_lock_timeout` and give up.
+
 ## v5.0.0 — 2026-09-24
 
 Major rewrite of the concurrency core. Projects on Laravel 10/11 or

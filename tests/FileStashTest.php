@@ -584,11 +584,11 @@ class FileStashTest extends TestCase
         // atime but before prune got to delete it.
         $cache = new class(['path' => $this->cachePath, ...$config]) extends FileStash
         {
-            protected function deleteEntry(string $path, string $evictionReason = 'pruned', ?callable $verify = null): DeleteResult
+            protected function unlinkLocked(string $path, ?callable $verify = null): DeleteResult
             {
                 touch($path);
 
-                return parent::deleteEntry($path, $evictionReason, $verify);
+                return parent::unlinkLocked($path, $verify);
             }
         };
 
@@ -3261,6 +3261,83 @@ class FileStashTest extends TestCase
         $this->assertEquals(1, $stats['deleted']);
         $this->assertTrue($existedDuringPrune);
         $this->assertFileDoesNotExist($otherPath);
+    }
+
+    public static function pinnedDeletionProvider(): array
+    {
+        return [
+            'forget()' => [fn (FileStash $cache, GenericFile $file) => $cache->forget($file)],
+            'getOnce() cleanup' => [fn (FileStash $cache, GenericFile $file) => $cache->getOnce($file, fn () => null)],
+            'deferred forget()' => [fn (FileStash $cache, GenericFile $file) => $cache->batch(
+                [new GenericFile('fixtures://test-file.txt')],
+                fn () => $cache->forget($file),
+            )],
+        ];
+    }
+
+    #[DataProvider('pinnedDeletionProvider')]
+    public function testEvictionListenerCanDeleteFromTheCache(\Closure $delete)
+    {
+        // Deletions hold the pin lock exclusively; the event must come after
+        // it is released, or a listener that deletes from the cache waits for
+        // this very process until lifecycle_lock_timeout and gives up.
+        $primary = new GenericFile('fixtures://test-image.jpg');
+        $derived = new GenericFile('https://example.com/derived.jpg');
+        $derivedPath = $this->getCachedPath($derived->getUrl());
+        file_put_contents($derivedPath, 'derived');
+
+        $cacheRef = null;
+        $forgotten = null;
+        $dispatcher = $this->createStub(Dispatcher::class);
+        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$cacheRef, &$forgotten, $derived, $derivedPath) {
+            if ($event instanceof CacheFileEvicted && $event->path !== $derivedPath) {
+                $forgotten = $cacheRef->forget($derived);
+            }
+        });
+
+        $cache = new FileStash(
+            ['path' => $this->cachePath, 'events_enabled' => true, 'lifecycle_lock_timeout' => 1],
+            dispatcher: $dispatcher,
+        );
+        $cacheRef = $cache;
+        $cache->get($primary, $this->noop);
+
+        $delete($cache, $primary);
+
+        $this->assertTrue($forgotten);
+        $this->assertFileDoesNotExist($derivedPath);
+    }
+
+    public function testPruneEvictionListenerCanRunAChunkedBatch()
+    {
+        // prune() holds the pin lock exclusively around each eviction; a
+        // chunked batch started by a listener needs it shared.
+        $stalePath = $this->getCachedPath('https://example.com/stale');
+        file_put_contents($stalePath, 'stale');
+        touch($stalePath, time() - 7200);
+
+        $cacheRef = null;
+        $batched = null;
+        $dispatcher = $this->createStub(Dispatcher::class);
+        $dispatcher->method('dispatch')->willReturnCallback(function ($event) use (&$cacheRef, &$batched) {
+            if ($event instanceof CacheFileEvicted) {
+                $batched = $cacheRef->batch(
+                    [new GenericFile('fixtures://test-file.txt'), new GenericFile('fixtures://test-image.jpg')],
+                    fn (array $files, array $paths) => count($paths),
+                );
+            }
+        });
+
+        $cache = new FileStash(
+            ['path' => $this->cachePath, 'events_enabled' => true, 'lifecycle_lock_timeout' => 1, 'max_age' => 60, 'batch_chunk_size' => 1],
+            dispatcher: $dispatcher,
+        );
+        $cacheRef = $cache;
+
+        $stats = $cache->prune();
+
+        $this->assertSame(1, $stats['deleted']);
+        $this->assertSame(2, $batched);
     }
 
     public function testExistsRemoteAllowsMimeTypeWithCharsetParameter()

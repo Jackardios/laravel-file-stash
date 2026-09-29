@@ -694,10 +694,16 @@ class FileStash implements FileStashContract
         }
 
         try {
-            return $this->deleteEntry($path, $reason, $this->unreadSince($atime));
+            $result = $this->unlinkLocked($path, $this->unreadSince($atime));
         } finally {
             flock($pin, LOCK_UN);
         }
+
+        if ($result === DeleteResult::Deleted) {
+            $this->recordEviction($path, $reason);
+        }
+
+        return $result;
     }
 
     /**
@@ -959,10 +965,18 @@ class FileStash implements FileStashContract
                 );
             }
 
-            return array_map(fn (string $path): DeleteResult => $this->deleteEntry($path, $reason), $paths);
+            $results = array_map(fn (string $path): DeleteResult => $this->unlinkLocked($path), $paths);
         } finally {
             fclose($pin);
         }
+
+        foreach ($results as $index => $result) {
+            if ($result === DeleteResult::Deleted) {
+                $this->recordEviction($paths[$index], $reason);
+            }
+        }
+
+        return $results;
     }
 
     /**
@@ -1022,11 +1036,23 @@ class FileStash implements FileStashContract
         $result = $this->unlinkLocked($path, $verify);
 
         if ($result === DeleteResult::Deleted) {
-            $this->metrics->evictions++;
-            $this->dispatchEvent(new CacheFileEvicted($path, $evictionReason));
+            $this->recordEviction($path, $evictionReason);
         }
 
         return $result;
+    }
+
+    /**
+     * Count an eviction and dispatch CacheFileEvicted.
+     *
+     * Callers holding the pin lock exclusively call this only after
+     * releasing it: a listener may delete from the cache itself, which
+     * needs the pin lock and would otherwise wait for this very process.
+     */
+    private function recordEviction(string $path, string $reason): void
+    {
+        $this->metrics->evictions++;
+        $this->dispatchEvent(new CacheFileEvicted($path, $reason));
     }
 
     /**
