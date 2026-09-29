@@ -1076,8 +1076,9 @@ class FileStash implements FileStashContract
      * with a new file — deleting it would remove someone else's data.
      *
      * No events or metrics here: infrastructure cleanup (temp files,
-     * claims) goes through this method directly, entry deletions go
-     * through deleteEntry().
+     * claims) goes through this method directly; entry deletions record
+     * the eviction via recordEviction(), after releasing the pin lock
+     * where they hold it.
      *
      * @param  (callable(array<string, mixed>): bool)|null  $verify  Deletion guard run under the exclusive
      *                                                               lock with the fstat() of the locked inode; returning false skips the deletion.

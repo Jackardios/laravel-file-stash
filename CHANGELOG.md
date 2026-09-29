@@ -10,6 +10,11 @@ All notable changes to this package are documented in this file.
   security advisory PKSA-d5tc-s1qs-h781, published after v5.0.0, affects
   `laravel/framework` below 12.69.0 and 13.0 to 13.29; Composer's default
   `audit.block-insecure` already refused those versions.
+- Subclasses: `prune()` evictions and `forget()`/once cleanups no longer go
+  through the protected `deleteEntry()` (only `clear()` does), so their
+  `CacheFileEvicted` event can be dispatched after the pin lock is
+  released. Listen to `CacheFileEvicted` instead of overriding
+  `deleteEntry()`.
 
 ### Fixed
 

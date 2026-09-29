@@ -3,11 +3,15 @@
 namespace Jackardios\FileStash\Contracts;
 
 use GuzzleHttp\Exception\GuzzleException;
+use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
 use Jackardios\FileStash\Exceptions\FileIsTooLargeException;
+use Jackardios\FileStash\Exceptions\FileLockedException;
 use Jackardios\FileStash\Exceptions\HostNotAllowedException;
 use Jackardios\FileStash\Exceptions\LifecycleLockTimeoutException;
 use Jackardios\FileStash\Exceptions\MimeTypeIsNotAllowedException;
+use Jackardios\FileStash\Exceptions\SourceResourceIsInvalidException;
+use Jackardios\FileStash\Exceptions\SourceResourceTimedOutException;
 use Jackardios\FileStash\Support\CacheMetrics;
 
 interface FileStash
@@ -22,6 +26,15 @@ interface FileStash
      * @param  bool  $throwOnLock  Whether to throw an exception if a file is currently locked (i.e. written to). Otherwise the method will wait until the lock is released.
      * @return mixed Result of the callback.
      *
+     * @throws FailedToRetrieveFileException When the download fails (non-2xx after retries, lock attempts used up).
+     * @throws GuzzleException On network errors after retries.
+     * @throws FileNotFoundException When a storage disk file does not exist.
+     * @throws FileIsTooLargeException
+     * @throws MimeTypeIsNotAllowedException
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
+     * @throws FileLockedException When $throwOnLock is set and the file is being written.
+     * @throws SourceResourceTimedOutException When a storage disk stream stalls.
+     * @throws SourceResourceIsInvalidException
      * @throws LifecycleLockTimeoutException When the lifecycle lock cannot be acquired in time.
      * @throws \RuntimeException
      */
@@ -43,6 +56,15 @@ interface FileStash
      * @param  bool  $throwOnLock  Whether to throw an exception if a file is currently locked (i.e. written to). Otherwise the method will wait until the lock is released.
      * @return mixed Result of the callback.
      *
+     * @throws FailedToRetrieveFileException When the download fails (non-2xx after retries, lock attempts used up).
+     * @throws GuzzleException On network errors after retries.
+     * @throws FileNotFoundException When a storage disk file does not exist.
+     * @throws FileIsTooLargeException
+     * @throws MimeTypeIsNotAllowedException
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
+     * @throws FileLockedException When $throwOnLock is set and the file is being written.
+     * @throws SourceResourceTimedOutException When a storage disk stream stalls.
+     * @throws SourceResourceIsInvalidException
      * @throws LifecycleLockTimeoutException When the lifecycle lock cannot be acquired in time.
      * @throws \RuntimeException
      */
@@ -58,6 +80,15 @@ interface FileStash
      * @param  bool  $throwOnLock  Whether to throw an exception if a file is currently locked (i.e. written to). Otherwise the method will wait until the lock is released.
      * @return mixed Result of the callback.
      *
+     * @throws FailedToRetrieveFileException When the download fails (non-2xx after retries, lock attempts used up).
+     * @throws GuzzleException On network errors after retries.
+     * @throws FileNotFoundException When a storage disk file does not exist.
+     * @throws FileIsTooLargeException
+     * @throws MimeTypeIsNotAllowedException
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
+     * @throws FileLockedException When $throwOnLock is set and the file is being written.
+     * @throws SourceResourceTimedOutException When a storage disk stream stalls.
+     * @throws SourceResourceIsInvalidException
      * @throws LifecycleLockTimeoutException When the lifecycle lock cannot be acquired in time.
      * @throws \RuntimeException
      */
@@ -77,6 +108,15 @@ interface FileStash
      * @param  bool  $throwOnLock  Whether to throw an exception if a file is currently locked (i.e. written to). Otherwise the method will wait until the lock is released.
      * @return mixed Result of the callback.
      *
+     * @throws FailedToRetrieveFileException When the download fails (non-2xx after retries, lock attempts used up).
+     * @throws GuzzleException On network errors after retries.
+     * @throws FileNotFoundException When a storage disk file does not exist.
+     * @throws FileIsTooLargeException
+     * @throws MimeTypeIsNotAllowedException
+     * @throws HostNotAllowedException Also DiskNotAllowedException for storage disks.
+     * @throws FileLockedException When $throwOnLock is set and the file is being written.
+     * @throws SourceResourceTimedOutException When a storage disk stream stalls.
+     * @throws SourceResourceIsInvalidException
      * @throws LifecycleLockTimeoutException When the lifecycle lock cannot be acquired in time.
      * @throws \RuntimeException
      */

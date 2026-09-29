@@ -15,7 +15,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # Superseded pull request runs are cancelled; every master run finishes.
+  # A pull request run is cancelled by a newer push; a running master run
+  # finishes (a pending one is still superseded by a newer run).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
