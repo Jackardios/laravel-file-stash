@@ -12,6 +12,7 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Promise\Create;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
+use Illuminate\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Filesystem\Filesystem;
@@ -1468,6 +1469,22 @@ class FileStashTest extends TestCase
         }
 
         $this->assertFileDoesNotExist($this->getCachedPath('test://secret.txt'));
+    }
+
+    public function testDiskUrlsOutsideLaravelNeedAFilesystemManager()
+    {
+        $cache = $this->createCache();
+        $app = Container::getInstance();
+        Container::setInstance(new Container);
+
+        try {
+            $cache->get(new GenericFile('fixtures://test-file.txt'));
+            $this->fail('Expected RuntimeException to be thrown.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('require a filesystem manager', $exception->getMessage());
+        } finally {
+            Container::setInstance($app);
+        }
     }
 
     public function testEmptyAllowedDisksBlocksAllDisksButNotHttp()
