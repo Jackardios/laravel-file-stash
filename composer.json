@@ -51,7 +51,7 @@
     "scripts": {
         "test": "./vendor/bin/phpunit",
         "analyse": "./vendor/bin/phpstan analyse --no-progress --memory-limit=1G",
-        "test-coverage": "php -d pcov.enabled=1 ./vendor/bin/phpunit --coverage-text --colors=never"
+        "test-coverage": "php -d pcov.enabled=1 ./vendor/bin/phpunit --exclude-group concurrency --coverage-text --colors=never"
     },
     "extra": {
         "laravel": {

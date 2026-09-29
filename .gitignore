@@ -1,5 +1,4 @@
 /vendor/
-.phpunit.result.cache
 .phpunit.cache/
 .phpstan/
 composer.lock
