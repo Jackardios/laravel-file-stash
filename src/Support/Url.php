@@ -30,13 +30,7 @@ final class Url
      */
     public static function splitByProtocol(string $url): array
     {
-        $parts = explode('://', $url, 2);
-
-        if (isset($parts[1])) {
-            return [$parts[0], $parts[1]];
-        }
-
-        return [$parts[0]];
+        return explode('://', $url, 2);
     }
 
     /**

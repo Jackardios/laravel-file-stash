@@ -158,7 +158,7 @@ class FileStash implements FileStashContract
         }
 
         try {
-            $filesystem = app('filesystem');
+            $filesystem = Container::getInstance()->make('filesystem');
         } catch (\Throwable $exception) {
             throw new RuntimeException(
                 'Storage disk URLs (disk://path) require a filesystem manager. '
@@ -535,9 +535,8 @@ class FileStash implements FileStashContract
         $stats = $this->withLifecycleSharedLock(function (): array {
             $stats = ['deleted' => 0, 'remaining' => 0, 'total_size' => 0, 'completed' => true];
 
-            $startTime = time();
+            $now = $startTime = time();
             $timeout = $this->config['prune_timeout'];
-            $now = time();
             $allowedAge = $this->config['max_age'] * 60;
             $allowedSize = $this->config['max_size'];
 
