@@ -546,7 +546,7 @@ All exceptions are in `Jackardios\FileStash\Exceptions` with `public readonly` p
 | `InvalidConfigurationException` | Invalid config value | `string $key`, `string $reason` |
 | `SourceResourceIsInvalidException` | Invalid stream resource | — |
 | `SourceResourceTimedOutException` | Storage-disk stream read timed out | — |
-| `FailedToRetrieveFileException` | Download failed (non-2xx after `http_retries`, network error, `lock_max_attempts` used up, temp file could not be written or published) | `int $statusCode` (`0` if not HTTP) |
+| `FailedToRetrieveFileException` | Download failed (non-2xx after `http_retries`, `lock_max_attempts` used up, temp file could not be written or published); network errors throw the Guzzle exception | `int $statusCode` (`0` if not HTTP) |
 | `LifecycleLockTimeoutException` | Lifecycle or pin lock not acquired within `lifecycle_lock_timeout` (extends `RuntimeException`; `forget()` catches it and returns `false`) | — |
 
 ```php
