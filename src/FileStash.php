@@ -524,10 +524,6 @@ class FileStash implements FileStashContract
         $stats = $this->withLifecycleSharedLock(function (): array {
             $stats = ['deleted' => 0, 'remaining' => 0, 'total_size' => 0, 'completed' => true];
 
-            if (! $this->files->exists($this->config['path'])) {
-                return $stats;
-            }
-
             $startTime = time();
             $timeout = $this->config['prune_timeout'];
             $now = time();
@@ -779,10 +775,6 @@ class FileStash implements FileStashContract
         }
 
         $this->withLifecycleExclusiveLock(function () {
-            if (! $this->files->exists($this->config['path'])) {
-                return;
-            }
-
             foreach ($this->findCacheFiles() as $file) {
                 // With the exclusive lifecycle lock held there are no active
                 // downloads: temp files are orphans of crashed writers (no
