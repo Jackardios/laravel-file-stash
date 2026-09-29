@@ -9,6 +9,9 @@ All notable changes to this package are documented in this file.
 - `CacheFileEvicted` is dispatched after the pin lock is released. A
   listener that deletes from the cache (`forget()`, a chunked batch) used to
   wait for its own process until `lifecycle_lock_timeout` and give up.
+- A reader no longer `touch()`es an entry that was deleted outside the lock
+  protocol after it was opened. `touch()` recreated it as an empty file,
+  and a second reader locking that file in time kept it as a valid entry.
 
 ## v5.0.0 — 2026-09-24
 

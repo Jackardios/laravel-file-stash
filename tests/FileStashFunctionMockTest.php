@@ -667,6 +667,45 @@ class FileStashFunctionMockTest extends TestCase
         $this->assertSame($content, file_get_contents($cachedPath));
     }
 
+    public function testEntryDeletedExternallyIsNotTouchedIntoAnEmptyFileAnotherReaderKeeps()
+    {
+        $cache = $this->createCacheWithMockFixtures(['touch_interval' => 0]);
+        $url = 'fixtures://test-file.txt';
+        $cachedPath = $this->getCachedPath($url);
+        file_put_contents($cachedPath, 'stale');
+
+        // The entry is deleted outside the lock protocol right after the
+        // reader's fstat(). A touch() would create an empty file under its
+        // name, and a second reader locking that file before the cleanup
+        // would keep it alive as a valid (empty) entry.
+        $deleted = false;
+        $this->getFunctionMock('Jackardios\\FileStash', 'fstat')->expects($this->atLeastOnce())
+            ->willReturnCallback(function ($stream) use (&$deleted, $cachedPath) {
+                $stat = \fstat($stream);
+                if (! $deleted && stream_get_meta_data($stream)['uri'] === $cachedPath) {
+                    $deleted = true;
+                    unlink($cachedPath);
+                }
+
+                return $stat;
+            });
+        $secondReader = null;
+        $this->getFunctionMock('Jackardios\\FileStash', 'touch')->expects($this->any())
+            ->willReturnCallback(function (string $path) use (&$secondReader): bool {
+                $touched = \touch($path);
+                $secondReader = fopen($path, 'rb');
+                flock($secondReader, LOCK_SH);
+
+                return $touched;
+            });
+
+        $content = $cache->get(new GenericFile($url), fn ($file, $path) => file_get_contents($path));
+
+        $this->assertTrue($deleted);
+        $this->assertSame(file_get_contents(__DIR__.'/files/test-file.txt'), $content);
+        $this->assertSame($content, file_get_contents($cachedPath));
+    }
+
     public function testPruneTimeout()
     {
         for ($i = 0; $i < 5; $i++) {

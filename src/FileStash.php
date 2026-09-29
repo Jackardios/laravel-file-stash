@@ -1501,9 +1501,10 @@ class FileStash implements FileStashContract
      * touch() works by path and creates a missing file. Entries are only
      * deleted under an exclusive lock, which our shared lock excludes, but a
      * deletion outside the lock protocol (e.g. a deploy script wiping the
-     * directory) between our fstat() and the touch() would leave a new,
-     * empty file under the entry name — served as valid content from then
-     * on. The nlink of the locked inode tells whether that happened.
+     * directory) would let touch() leave a new, empty file under the entry
+     * name — served as valid content from then on. So the path is touched
+     * only while it still names the locked inode, and the nlink of that
+     * inode tells whether it vanished anyway.
      *
      * @param  resource  $stream  The entry's stream, holding a shared lock.
      * @param  array<string, mixed>  $stat  fstat() of the locked stream.
@@ -1516,7 +1517,11 @@ class FileStash implements FileStashContract
             return true;
         }
 
-        if (! @touch($cachedPath)) {
+        clearstatcache(true, $cachedPath);
+        $current = @stat($cachedPath);
+        $touched = $current !== false && $current['dev'] === $stat['dev'] && $current['ino'] === $stat['ino'];
+
+        if ($touched && ! @touch($cachedPath)) {
             $this->logger->warning('Failed to update access time for cached file', [
                 'path' => $cachedPath,
                 'error' => error_get_last()['message'] ?? 'Unknown error',
@@ -1529,9 +1534,12 @@ class FileStash implements FileStashContract
             return true;
         }
 
-        // Remove the empty file touch() may have created; a verify guard,
-        // because a claim holder may have published a real entry meanwhile.
-        $this->unlinkLocked($cachedPath, static fn (array $s): bool => $s['size'] === 0);
+        if ($touched) {
+            // Deleted between the stat() and the touch(): remove the empty
+            // file touch() created; a verify guard, because a claim holder
+            // may have published a real entry meanwhile.
+            $this->unlinkLocked($cachedPath, static fn (array $s): bool => $s['size'] === 0);
+        }
 
         return false;
     }
