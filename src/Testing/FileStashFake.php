@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\ParallelTesting;
 use Illuminate\Support\Testing\Fakes\Fake;
 use Jackardios\FileStash\Contracts\File;
 use Jackardios\FileStash\FileStash;
+use LogicException;
 use PHPUnit\Framework\Assert;
 use Throwable;
 
@@ -215,6 +216,11 @@ class FileStashFake extends FileStash implements Fake
      */
     public function clear(): void
     {
+        if ($this->batchDepth > 0) {
+            // Mirrors the lifecycle lock upgrade the real cache refuses.
+            throw new LogicException('Do not call clear() from inside batch()/batchOnce() callbacks.');
+        }
+
         foreach (glob("{$this->path()}/*") ?: [] as $entry) {
             if (@unlink($entry)) {
                 $this->metrics->evictions++;

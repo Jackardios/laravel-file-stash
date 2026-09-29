@@ -16,6 +16,8 @@ All notable changes to this package are documented in this file.
   as a raw `BadResponseException`: `exists()` returns `false` and `get()`
   throws `FailedToRetrieveFileException` with the 3xx status, like any other
   redirect that does not end in a document.
+- `FileStashFake::clear()` inside a batch callback throws `LogicException`,
+  like the real cache, instead of deleting the files the callback uses.
 
 ## v5.0.0 — 2026-09-24
 

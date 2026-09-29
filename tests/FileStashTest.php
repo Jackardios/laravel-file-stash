@@ -2638,6 +2638,24 @@ class FileStashTest extends TestCase
         $this->assertFileDoesNotExist($path);
     }
 
+    public function testFakeClearInsideBatchCallbackThrowsLogicExceptionLikeTheRealCache()
+    {
+        $fake = new FileStashFake($this->app);
+        $file = new GenericFile('https://example.com/a.jpg');
+
+        $path = $fake->get($file);
+
+        try {
+            $fake->batch([$file], function () use ($fake) {
+                $fake->clear();
+            });
+            $this->fail('Expected LogicException to be thrown.');
+        } catch (\LogicException) {
+        }
+
+        $this->assertFileExists($path);
+    }
+
     public function testFakeNeverTouchesStorageDisks()
     {
         // Hermetic like Http::fake(): an unconfigured disk would throw if the
