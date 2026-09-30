@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented in this file.
 
-## v5.0.1 — Unreleased
+## v5.0.1 — 2026-09-30
 
 ### Changed
 
