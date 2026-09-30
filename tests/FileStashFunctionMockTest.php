@@ -391,20 +391,32 @@ class FileStashFunctionMockTest extends TestCase
             'lock_max_attempts' => 1,
         ]);
 
-        // Each acquisition round: contended for ~150 ms, then "acquired" — but
+        // Each acquisition round: contended for 150 ms, then "acquired" — but
         // the claim file is unlinked first, so the caller sees nlink == 0 and
         // retries. One shared 0.2 s budget fits one such round; a fresh budget
-        // per inner retry would let all five of them acquire.
+        // per inner retry would let all five of them acquire. A virtual clock
+        // (advanced by the retry sleeps) keeps this independent of load: with
+        // real time, a late wake-up let a second round acquire.
+        $clock = 1000.0;
+        foreach (['Jackardios\\FileStash', 'Jackardios\\FileStash\\Support'] as $namespace) {
+            $this->getFunctionMock($namespace, 'microtime')->expects($this->atLeastOnce())->willReturnCallback(function () use (&$clock) {
+                return $clock;
+            });
+        }
+        $this->getFunctionMock('Jackardios\\FileStash\\Support', 'usleep')->expects($this->atLeastOnce())->willReturnCallback(function (int $microseconds) use (&$clock) {
+            $clock += $microseconds / 1e6;
+        });
+
         $roundStart = null;
         $acquiredRounds = 0;
         $flockMock = $this->getFunctionMock('Jackardios\\FileStash\\Support', 'flock');
-        $flockMock->expects($this->atLeastOnce())->willReturnCallback(function ($stream, $operation, &$wouldBlock = null) use (&$roundStart, &$acquiredRounds, $claimPath) {
+        $flockMock->expects($this->atLeastOnce())->willReturnCallback(function ($stream, $operation, &$wouldBlock = null) use (&$clock, &$roundStart, &$acquiredRounds, $claimPath) {
             if (($operation & LOCK_EX) === 0) {
                 return \flock($stream, $operation, $wouldBlock);
             }
 
-            $roundStart ??= microtime(true);
-            if (microtime(true) - $roundStart < 0.15) {
+            $roundStart ??= $clock;
+            if ($clock - $roundStart < 0.15) {
                 $wouldBlock = 1;
 
                 return false;
