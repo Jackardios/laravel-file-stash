@@ -47,7 +47,7 @@ final class HostValidator
         $host = $this->hostOf($url);
 
         if ($this->blockPrivateHosts && $this->isPrivateHost($host)) {
-            throw HostNotAllowedException::create($host);
+            throw HostNotAllowedException::createForPrivateAddress($host);
         }
 
         $this->ensureListed($host);

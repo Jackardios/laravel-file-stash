@@ -127,6 +127,29 @@ class HostValidatorTest extends TestCase
         }
     }
 
+    public function testPrivateAddressIsNotReportedAsMissingFromTheAllowedHostsList(): void
+    {
+        foreach ([new HostValidator(null, true), new HostValidator(['127.0.0.1'], true)] as $validator) {
+            try {
+                $validator->validate('https://127.0.0.1/file.jpg');
+                $this->fail('Expected HostNotAllowedException to be thrown.');
+            } catch (HostNotAllowedException $exception) {
+                $this->assertSame('127.0.0.1', $exception->host);
+                $this->assertSame(
+                    "Host '127.0.0.1' is or resolves to a private or reserved address, or does not resolve.",
+                    $exception->getMessage()
+                );
+            }
+        }
+
+        try {
+            (new HostValidator(['files'], true))->validate('https://93.184.216.34/file.jpg');
+            $this->fail('Expected HostNotAllowedException to be thrown.');
+        } catch (HostNotAllowedException $exception) {
+            $this->assertSame("Host '93.184.216.34' is not in the allowed hosts list.", $exception->getMessage());
+        }
+    }
+
     public function testIpv6LiteralMatchesAllowedHostsInNaturalForm(): void
     {
         // Brackets from parse_url and zero-compression differences must not

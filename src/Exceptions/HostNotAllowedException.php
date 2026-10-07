@@ -19,4 +19,18 @@ class HostNotAllowedException extends Exception
     {
         return new self("Host '{$host}' is not in the allowed hosts list.", $code, $previous, $host);
     }
+
+    /**
+     * For a host rejected by `block_private_hosts`, whether or not there is
+     * an allowed hosts list.
+     */
+    public static function createForPrivateAddress(string $host, int $code = 0, ?Throwable $previous = null): self
+    {
+        return new self(
+            "Host '{$host}' is or resolves to a private or reserved address, or does not resolve.",
+            $code,
+            $previous,
+            $host
+        );
+    }
 }

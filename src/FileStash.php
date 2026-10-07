@@ -1528,7 +1528,10 @@ class FileStash implements FileStashContract
      */
     protected function touchEntry(string $cachedPath, $stream, array $stat): bool
     {
-        $touchInterval = $this->config['touch_interval'];
+        // Never throttled past half of max_age: with a longer interval a
+        // read would not refresh the access time before prune() evicts the
+        // entry, and hot entries would expire like unused ones.
+        $touchInterval = min($this->config['touch_interval'], $this->config['max_age'] * 30);
         if ($touchInterval > 0 && is_int($stat['atime'] ?? null) && (time() - $stat['atime']) < $touchInterval) {
             return true;
         }

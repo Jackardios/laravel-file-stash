@@ -100,11 +100,24 @@ new FileStash([...config('file-stash'), 'timeout' => 10], $client);
 Outside Laravel, pass an absolute `path` and, for `disk://` URLs, a
 `FilesystemManager` to the constructor.
 
-**Injected Guzzle clients.** Timeouts, `max_redirects`, the redirect host
-check and the curl stall timeout are applied to every request and override
-the client's own values. The client's other `curl` options and its redirect
-settings (`protocols`, `strict`, `referer`, `track_redirects`) are kept, and
-its own `on_redirect` callback runs after the host check.
+**Injected Guzzle clients.** Timeouts, the redirect host check and the curl
+stall timeout are applied to every request and override the client's own
+values. The client's other `curl` options and its redirect settings
+(`protocols`, `strict`, `referer`, `track_redirects`) are kept, and its own
+`on_redirect` callback runs after the host check. Redirects are limited by
+the stricter of `max_redirects` (default 5) and the client's own
+`allow_redirects.max`, and a client that does not follow redirects
+(`allow_redirects` of `false`, `null`, `0` or `[]`, or a `max` of `0`) still
+does not follow them. v5.0.0 and v5.0.1 ignored the client here: every
+injected client followed up to `max_redirects` redirects.
+
+**Your own implementation of the contract.** `metrics(): CacheMetrics` was
+added to `Contracts\FileStash`; a class that implements the contract must
+add it.
+
+**`new FailedToRetrieveFileException()`** requires the message now. Pass
+one, or use `FailedToRetrieveFileException::create()`, which still has a
+default message.
 
 **`exists()`** returns `false` only when the answer is definitive: a 4xx
 other than 429, a final 3xx response, or too many redirects. A 429 or 5xx
@@ -173,7 +186,9 @@ locks. Either:
 
 Besides the entries, the v5 cache directory holds `.locks/` (per-entry
 claim files), `.lifecycle.lock`, `.pin.lock` and transient `*.tmp` files.
-v4 kept its lifecycle lock in the system temp directory.
+v4 kept its lifecycle lock in the system temp directory, in
+`laravel-file-stash/locks/` under `sys_get_temp_dir()`. v5 does not use that
+directory; delete it once the last v4 worker is gone.
 
 If web and queue workers run as different users, see
 [Sharing the cache between users](README.md#sharing-the-cache-between-users):

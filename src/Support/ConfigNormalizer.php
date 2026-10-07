@@ -307,6 +307,11 @@ final class ConfigNormalizer
 
         $path = rtrim($value, '/\\');
 
+        // "/" and "C:\\" are absolute, but nothing is left of them here.
+        if ($path === '' || preg_match('#^[A-Za-z]:$#', $path) === 1) {
+            throw InvalidConfigurationException::create('path', 'must not be a root directory');
+        }
+
         if (! self::isAbsolutePath($path)) {
             throw InvalidConfigurationException::create('path', 'must be an absolute path');
         }

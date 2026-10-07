@@ -362,6 +362,10 @@ class RemoteFetcher
      * (protocols, referer, ...) survive, and its own on_redirect callback
      * runs after the host validation passed.
      *
+     * The redirect budget is the stricter of the two, see redirectLimit():
+     * `max_redirects` limits how far a client that follows redirects may go,
+     * it does not make a client follow them, or follow them further.
+     *
      * `read_timeout` maps to curl's low-speed abort (CURLOPT_LOW_SPEED_*): the
      * transfer fails when it stalls below 1 byte/s for that many seconds (-1
      * or 0: no stall limit). The Guzzle `read_timeout` option only applies to
@@ -394,7 +398,7 @@ class RemoteFetcher
             'connect_timeout' => max($this->config['connect_timeout'], 0),
             'allow_redirects' => [
                 ...$inherited,
-                'max' => $this->config['max_redirects'],
+                'max' => $this->redirectLimit(),
                 'on_redirect' => function (
                     RequestInterface $request,
                     ResponseInterface $response,
@@ -424,6 +428,50 @@ class RemoteFetcher
         }
 
         return $options;
+    }
+
+    /**
+     * How many redirects a request may follow: `max_redirects`, lowered to
+     * what the injected client allows, as Guzzle reads its `allow_redirects`.
+     * An empty value (`false`, `null`, `0`, `[]`) or an empty `max` turns
+     * redirects off, and a `max` the client set itself is a ceiling.
+     *
+     * A client that does not set the option carries Guzzle's default
+     * settings, `max` of 5 included, as any new client does. That array is
+     * not a choice of the caller, so it does not lower a larger
+     * `max_redirects`.
+     */
+    protected function redirectLimit(): int
+    {
+        $limit = $this->config['max_redirects'];
+
+        if ($this->client === null) {
+            return $limit;
+        }
+
+        $redirects = $this->client->getConfig('allow_redirects');
+
+        if (empty($redirects)) {
+            return 0;
+        }
+
+        if (
+            ! is_array($redirects)
+            || ! array_key_exists('max', $redirects)
+            || $redirects === (new Client(['handler' => static fn () => null]))->getConfig('allow_redirects')
+        ) {
+            return $limit;
+        }
+
+        if (empty($redirects['max'])) {
+            return 0;
+        }
+
+        // A `max` that is not a number, or not one an integer holds (INF,
+        // NAN), means "no limit" to Guzzle: the config is the limit.
+        $max = $redirects['max'];
+
+        return is_numeric($max) && ! is_nan((float) $max) ? (int) min((float) $max, (float) $limit) : $limit;
     }
 
     /**

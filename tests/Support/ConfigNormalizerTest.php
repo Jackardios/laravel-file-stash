@@ -93,6 +93,24 @@ class ConfigNormalizerTest extends TestCase
         ];
     }
 
+    #[DataProvider('rootPathProvider')]
+    public function testPathRejectsRootDirectoriesAsSuch(string $path): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage("Invalid configuration for 'path': must not be a root directory");
+
+        ConfigNormalizer::normalize(['path' => $path]);
+    }
+
+    public static function rootPathProvider(): array
+    {
+        return [
+            'unix root' => ['/'],
+            'windows drive' => ['C:\\'],
+            'windows drive with a slash' => ['c:/'],
+        ];
+    }
+
     public function testPathTrailingSeparatorIsTrimmed(): void
     {
         $this->assertSame(self::PATH, $this->normalize(['path' => self::PATH.'/'])['path']);

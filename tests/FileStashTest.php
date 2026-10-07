@@ -2227,6 +2227,41 @@ class FileStashTest extends TestCase
         $this->assertEquals($atimeBefore, $atimeAfter);
     }
 
+    public function testTouchIntervalLongerThanMaxAgeDoesNotLetPruneEvictAnEntryJustRead()
+    {
+        // With the throttle as long as max_age, no read would ever refresh
+        // the access time before prune() evicts the entry.
+        $cache = $this->createCache(['max_age' => 1, 'touch_interval' => 3600]);
+        $url = 'fixtures://test-image.jpg';
+        $cachedPath = $this->getCachedPath($url);
+
+        copy(__DIR__.'/files/test-image.jpg', $cachedPath);
+        touch($cachedPath, time() - 45, time() - 45);
+        clearstatcache();
+
+        $cache->get(new GenericFile($url), $this->noop);
+
+        clearstatcache();
+        $this->assertGreaterThanOrEqual(time() - 5, fileatime($cachedPath));
+    }
+
+    public function testTouchIntervalUpToHalfOfMaxAgeIsNotShortened()
+    {
+        $cache = $this->createCache(['max_age' => 1, 'touch_interval' => 30]);
+        $url = 'fixtures://test-image.jpg';
+        $cachedPath = $this->getCachedPath($url);
+
+        copy(__DIR__.'/files/test-image.jpg', $cachedPath);
+        touch($cachedPath, time() - 20, time() - 20);
+        clearstatcache();
+        $atimeBefore = fileatime($cachedPath);
+
+        $cache->get(new GenericFile($url), $this->noop);
+
+        clearstatcache();
+        $this->assertSame($atimeBefore, fileatime($cachedPath));
+    }
+
     public function testTouchCalledWhenIntervalExceeded()
     {
         $cache = $this->createCache(['touch_interval' => 1]);
@@ -2875,6 +2910,121 @@ class FileStashTest extends TestCase
         }
 
         $this->assertSame([], $clientRedirects);
+    }
+
+    #[DataProvider('provideClientsWithRedirectsDisabled')]
+    public function testInjectedClientWithRedirectsDisabledDoesNotFollowRedirects(mixed $allowRedirects)
+    {
+        // The per-request `allow_redirects` replaces the client's own. A
+        // client that turned redirects off (say, because the application
+        // validates only the URL it passes in) must not get them back from
+        // the `max_redirects` default.
+        $url = 'https://files/image.jpg';
+        $mock = new MockHandler([
+            new Response(302, ['Location' => 'http://169.254.169.254/latest/meta-data/']),
+            new Response(200, [], 'must never be fetched'),
+            new Response(302, ['Location' => 'http://169.254.169.254/latest/meta-data/']),
+            new Response(200, [], 'must never be fetched'),
+        ]);
+
+        $cache = new FileStash([
+            'path' => $this->cachePath,
+            'max_redirects' => 3,
+        ], new Client([
+            'handler' => HandlerStack::create($mock),
+            'allow_redirects' => $allowRedirects,
+        ]));
+
+        try {
+            $cache->get(new GenericFile($url), $this->noop);
+            $this->fail('Expected FailedToRetrieveFileException to be thrown.');
+        } catch (FailedToRetrieveFileException $exception) {
+            $this->assertSame(302, $exception->statusCode);
+        }
+
+        $this->assertSame(3, $mock->count(), 'GET must not request the redirect target.');
+        $this->assertFileDoesNotExist($this->getCachedPath($url));
+
+        $mock->reset();
+        $mock->append(
+            new Response(302, ['Location' => 'http://169.254.169.254/latest/meta-data/']),
+            new Response(200),
+        );
+
+        $this->assertFalse($cache->exists(new GenericFile($url)));
+        $this->assertSame(1, $mock->count(), 'HEAD must not request the redirect target.');
+    }
+
+    public static function provideClientsWithRedirectsDisabled(): array
+    {
+        return [
+            'false' => [false],
+            'null' => [null],
+            'zero' => [0],
+            'an empty array' => [[]],
+            'max 0' => [['max' => 0]],
+            'max null' => [['max' => null]],
+            'max 0 with other settings' => [['max' => 0, 'strict' => true]],
+        ];
+    }
+
+    #[DataProvider('provideClientsWithRedirectsEnabled')]
+    public function testRedirectBudgetIsTheStricterOfTheClientAndTheConfig(array $clientConfig, int $maxRedirects, int $expected)
+    {
+        $captured = [];
+        $stack = HandlerStack::create(new MockHandler([new Response(200)]));
+        $stack->push(function (callable $handler) use (&$captured) {
+            return function (RequestInterface $request, array $options) use ($handler, &$captured) {
+                $captured = $options;
+
+                return $handler($request, $options);
+            };
+        });
+
+        $cache = new FileStash([
+            'path' => $this->cachePath,
+            'max_redirects' => $maxRedirects,
+        ], new Client(['handler' => $stack, ...$clientConfig]));
+        $cache->exists(new GenericFile('https://files/image.jpg'));
+
+        $this->assertSame($expected, $captured['allow_redirects']['max']);
+        $this->assertIsCallable($captured['allow_redirects']['on_redirect']);
+    }
+
+    public static function provideClientsWithRedirectsEnabled(): array
+    {
+        return [
+            // Guzzle's default of 5 is not the caller's choice.
+            'not set, config above the Guzzle default' => [[], 8, 8],
+            'true' => [['allow_redirects' => true], 8, 8],
+            'no max' => [['allow_redirects' => ['strict' => true]], 8, 8],
+            'a lower max' => [['allow_redirects' => ['max' => 2]], 3, 2],
+            'a higher max' => [['allow_redirects' => ['max' => 10]], 3, 3],
+            'max 5 on its own' => [['allow_redirects' => ['max' => 5]], 8, 5],
+            'a numeric string' => [['allow_redirects' => ['max' => '2']], 3, 2],
+            // No limit to Guzzle; never "no redirects", and never no limit here.
+            'max INF' => [['allow_redirects' => ['max' => INF]], 3, 3],
+            'max NAN' => [['allow_redirects' => ['max' => NAN]], 3, 3],
+            'a max that is not a number' => [['allow_redirects' => ['max' => 'abc']], 3, 3],
+        ];
+    }
+
+    public function testInjectedClientWithALowerMaxStopsAtItsOwnLimit()
+    {
+        $url = 'https://files/image.jpg';
+        $hop = fn () => new Response(302, ['Location' => 'https://files/next.jpg']);
+        $mock = new MockHandler([$hop(), $hop(), $hop(), $hop(), $hop()]);
+
+        $cache = new FileStash([
+            'path' => $this->cachePath,
+            'max_redirects' => 4,
+        ], new Client([
+            'handler' => HandlerStack::create($mock),
+            'allow_redirects' => ['max' => 1],
+        ]));
+
+        $this->assertFalse($cache->exists(new GenericFile($url)));
+        $this->assertSame(3, $mock->count(), 'One request and one redirect, as the client alone would make.');
     }
 
     public function testRedirectToDisallowedHostIsBlocked()

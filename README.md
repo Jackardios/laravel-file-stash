@@ -23,11 +23,11 @@ Pruner   ──────────delete───────────�
 File Stash gives every worker a safe, shared file cache with proper locking:
 
 ```
-Worker A ──fetch──► image.jpg ──LOCK_EX──► /cache/abc123 ──unlock──► done
-Worker B ────────── (waits) ──────────────LOCK_SH──► read ──► done
-Worker C ────────── (waits) ──────────────LOCK_SH──► read ──► done
+Worker A ──claim──► fetch image.jpg ──► abc123.tmp ──rename──► /cache/abc123 ──LOCK_SH──► read ──► done
+Worker B ────────── (waits on the claim) ─────────────────────────────────────LOCK_SH──► read ──► done
+Worker C ────────── (waits on the claim) ─────────────────────────────────────LOCK_SH──► read ──► done
 
-Pruner   ────────── (skips locked files) ────────────────────► prune
+Pruner   ────────── (skips locked files) ─────────────────────────────────────────────────► prune
 ```
 
 **One download. Shared reads. No corruption. No race conditions.**
@@ -72,7 +72,7 @@ In all these cases, `Storage::get()` returns file contents as a string (loaded i
                           └───────────────────────────────┘
 ```
 
-Each file is identified by a SHA-256 hash of its URL. On a cache miss the worker takes a per-file *claim lock* (so concurrent workers never download the same URL twice), streams the download into an exclusively locked temp file, and publishes it with an atomic `rename()`. Readers open the published file under a shared lock — they can never observe a partially written file. File-level locks prevent pruning of files that are currently in use, and lifecycle locks coordinate destructive operations like `clear()`. If a writer crashes mid-download, the kernel releases its locks and the next worker simply takes over; orphaned temp files are garbage-collected by `prune()`.
+Each file is identified by a SHA-256 hash of its URL. On a cache miss the worker takes a per-file *claim lock* (so concurrent workers never download the same URL twice), streams the download into an exclusively locked temp file, and publishes it with an atomic `rename()`. Readers open the published file under a shared lock — they can never observe a partially written file. File-level locks prevent pruning of files that are currently in use, and lifecycle locks coordinate destructive operations like `clear()`. If a writer crashes mid-download, the kernel releases its locks and the next worker simply takes over; orphaned temp files are garbage-collected by `prune()`. The claim file (`.locks/{hash}.lock`, empty) stays after the download, so that workers queued on it wake on the same file; `prune()` removes claims nobody holds.
 
 ---
 
@@ -377,6 +377,29 @@ FileStash::forget($file);     // Remove a specific file (true = deleted or sched
 
 The cache is also cleared automatically when you run `php artisan cache:clear`.
 
+### Caches you construct yourself
+
+The scheduled `file-stash:prune`, the artisan command, the `FileStash` facade and `cache:clear` work on the `file-stash` singleton only, that is, on the directory in `config('file-stash.path')`. A cache you create with `new FileStash([...])` and its own `path` is not known to any of them: nothing prunes or clears it unless you do.
+
+```php
+use Illuminate\Support\Facades\Schedule;
+use Jackardios\FileStash\FileStash;
+
+// Pass the package config and override what differs; `path` is required.
+$thumbnails = new FileStash([
+    ...config('file-stash'),
+    'path' => storage_path('framework/cache/thumbnail-sources'),
+    'max_size' => 200_000_000,
+]);
+
+// routes/console.php — one prune per directory, with the limits of that instance.
+Schedule::call(fn () => $thumbnails->prune())->everyFiveMinutes()->name('prune-thumbnail-sources')->withoutOverlapping();
+```
+
+Schedule `prune()` for such a cache even if it only uses `getOnce()` or `batchOnce()`: besides old entries, only `prune()` removes the temp files of killed workers and the claim files in `.locks/` (one empty file for every URL downloaded since the last `prune()`). Build the instance for pruning with the same `path`, `max_age` and `max_size` as the one that fills the cache, for example by binding it once in the container. To empty the directory on `cache:clear`, call `$thumbnails->clear()` from your own listener of the `cache:clearing` event.
+
+Give every instance of one directory in a process the same `path`, not a symlink in one and its target in another: instances with different paths do not know that they share a directory, so `clear()` called inside a batch callback of the other one waits for `lifecycle_lock_timeout` instead of failing at once.
+
 ---
 
 ## Events
@@ -468,6 +491,8 @@ php artisan vendor:publish --tag=file-stash-config
 | `user_agent` | `FILE_STASH_USER_AGENT` | `Laravel-FileStash/5.x` | User-Agent header |
 | `max_redirects` | `FILE_STASH_MAX_REDIRECTS` | `5` | Max redirects to follow |
 
+**Injected Guzzle clients.** The timeouts, `max_redirects`, the redirect host check and the stall timeout are applied to every request and override the values of a client you pass to the constructor, with one exception: redirects are limited by the stricter of the two. A client that does not follow redirects (`allow_redirects` of `false`, `null`, `0` or `[]`, or a `max` of `0`) stays that way whatever `max_redirects` is, and a redirect response fails like any other non-2xx response. A client with its own `allow_redirects => ['max' => 2]` follows at most 2, or fewer if `max_redirects` is lower. A client that does not set `max` follows up to `max_redirects`. Every hop is checked against `allowed_hosts` and `block_private_hosts` in all cases.
+
 **How `read_timeout` works:** for HTTP(S) sources it maps to curl's low-speed abort — the transfer fails when it stalls below 1 byte/s for `read_timeout` seconds (rounded up to whole seconds). HTTP timeouts surface as Guzzle exceptions (`ConnectException`/`RequestException`), which participate in `http_retries`. For storage-disk streams it is applied via `stream_set_timeout()` and a stalled read throws `SourceResourceTimedOutException`.
 
 ### Security
@@ -529,7 +554,7 @@ IPv6 literals — in URLs and in `allowed_hosts` — are canonicalized before co
 
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `touch_interval` | `FILE_STASH_TOUCH_INTERVAL` | `60` | Min seconds between `touch()` on hot files |
+| `touch_interval` | `FILE_STASH_TOUCH_INTERVAL` | `60` | Min seconds between `touch()` on hot files; at most half of `max_age` is used, so a file that was just read is kept for at least another half of `max_age` |
 | `events_enabled` | `FILE_STASH_EVENTS_ENABLED` | `false` | Enable event dispatching |
 
 ---

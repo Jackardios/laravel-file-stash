@@ -2,6 +2,59 @@
 
 All notable changes to this package are documented in this file.
 
+## v5.0.2 — unreleased
+
+### Security
+
+- An injected Guzzle client that does not follow redirects no longer
+  follows them. This covers every value Guzzle itself reads as "do not
+  follow": `allow_redirects` of `false`, `null`, `0` or `[]`, and an array
+  with an empty `max`. Since v5.0.0 the per-request options replaced the
+  setting with `max_redirects` (default 5), so such a client followed
+  redirects, and with neither `allowed_hosts` nor `block_private_hosts`
+  set nothing checked where they led. If your application relies on such a
+  client to validate URLs itself, upgrade.
+- An injected client that sets its own `allow_redirects.max` follows at
+  most that many redirects when it is lower than `max_redirects`; before,
+  `['max' => 2]` followed up to `max_redirects`. The lower of the two
+  limits applies. A client that does not set `max` is limited by
+  `max_redirects` alone, as before.
+
+  Not covered: the package reads the client's defaults only. A client
+  whose handler stack or middleware changes `allow_redirects` per request
+  is not seen, and the redirect host check still depends on
+  `allowed_hosts` or `block_private_hosts` being configured.
+
+### Changed
+
+- A host rejected by `block_private_hosts` is reported as *Host '…' is or
+  resolves to a private or reserved address, or does not resolve* instead
+  of *is not in the allowed hosts list*, which was also the message
+  without such a list. The exception class and `$host` are the same;
+  `HostNotAllowedException::createForPrivateAddress()` is new.
+- `path` set to a root directory (`/`, `C:\`) is rejected with *must not be
+  a root directory* instead of *must be an absolute path*.
+
+### Fixed
+
+- `touch_interval` is capped at half of `max_age`: with a longer interval no
+  read refreshed the access time before `prune()` evicted the entry. With
+  the defaults nothing changes; with `max_age` of 1 minute the access time
+  is refreshed after 30 seconds instead of 60.
+
+### Documentation
+
+- README: a cache constructed with `new FileStash()` and its own `path` is
+  not pruned or cleared by the package's schedule, command or `cache:clear`
+  listener, with an example of scheduling its `prune()`, and instances of
+  one directory need the same `path`; claim files (`.locks/{hash}.lock`,
+  one for every downloaded URL) stay until `prune()`; what an injected
+  Guzzle client keeps and what the config overrides; the diagram of "The
+  Solution" shows the v5 write protocol.
+- UPGRADE.md: `metrics()` in the contract, the required message of
+  `FailedToRetrieveFileException`, v4's lock directory in the system temp
+  directory, and injected clients with their own redirect settings.
+
 ## v5.0.1 — 2026-09-30
 
 ### Changed
