@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented in this file.
 
-## v5.0.2 — unreleased
+## v5.0.2 — 2026-10-08
 
 ### Security
 
@@ -17,8 +17,10 @@ All notable changes to this package are documented in this file.
 - An injected client that sets its own `allow_redirects.max` follows at
   most that many redirects when it is lower than `max_redirects`; before,
   `['max' => 2]` followed up to `max_redirects`. The lower of the two
-  limits applies. A client that does not set `max` is limited by
-  `max_redirects` alone, as before.
+  limits applies. That includes Guzzle's own default of 5, which a client
+  created without `allow_redirects` carries: to follow more than 5
+  redirects with an injected client, raise both `max_redirects` and the
+  client's `allow_redirects.max`.
 
   Not covered: the package reads the client's defaults only. A client
   whose handler stack or middleware changes `allow_redirects` per request

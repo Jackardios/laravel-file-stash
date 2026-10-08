@@ -2995,8 +2995,9 @@ class FileStashTest extends TestCase
     public static function provideClientsWithRedirectsEnabled(): array
     {
         return [
-            // Guzzle's default of 5 is not the caller's choice.
-            'not set, config above the Guzzle default' => [[], 8, 8],
+            // A client created without the option carries Guzzle's max of 5.
+            'not set, config above the Guzzle default' => [[], 8, 5],
+            'not set, config below the Guzzle default' => [[], 3, 3],
             'true' => [['allow_redirects' => true], 8, 8],
             'no max' => [['allow_redirects' => ['strict' => true]], 8, 8],
             'a lower max' => [['allow_redirects' => ['max' => 2]], 3, 2],

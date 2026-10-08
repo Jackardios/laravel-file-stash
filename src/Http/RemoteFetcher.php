@@ -7,7 +7,6 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\TooManyRedirectsException;
-use GuzzleHttp\Handler\MockHandler;
 use Jackardios\FileStash\Contracts\File;
 use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
 use Jackardios\FileStash\Exceptions\FileIsTooLargeException;
@@ -435,15 +434,13 @@ class RemoteFetcher
     }
 
     /**
-     * How many redirects a request may follow: `max_redirects`, lowered to
-     * what the injected client allows, as Guzzle reads its `allow_redirects`.
-     * An empty value (`false`, `null`, `0`, `[]`) or an empty `max` turns
-     * redirects off, and a `max` the client set itself is a ceiling.
+     * How many redirects a request may follow: the lower of `max_redirects`
+     * and the injected client's own `allow_redirects.max`. An empty value
+     * (`false`, `null`, `0`, `[]`) or an empty `max` turns redirects off, as
+     * it does in Guzzle.
      *
-     * A client that does not set the option carries Guzzle's default
-     * settings, `max` of 5 included, as any new client does. That array is
-     * not a choice of the caller, so it does not lower a larger
-     * `max_redirects`.
+     * A client created without the option carries Guzzle's default `max`
+     * of 5, which counts like any other.
      */
     protected function redirectLimit(): int
     {
@@ -459,11 +456,7 @@ class RemoteFetcher
             return 0;
         }
 
-        if (
-            ! is_array($redirects)
-            || ! array_key_exists('max', $redirects)
-            || $redirects === (new Client(['handler' => new MockHandler]))->getConfig('allow_redirects')
-        ) {
+        if (! is_array($redirects) || ! array_key_exists('max', $redirects)) {
             return $limit;
         }
 
