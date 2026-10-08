@@ -503,12 +503,15 @@ class RemoteFetcher
      *
      * Timeouts and redirect handling are not client defaults: requestOptions()
      * applies them to every request, and clientOption() would otherwise read
-     * them back from this client and chain our on_redirect onto itself.
+     * them back from this client and chain our on_redirect onto itself. Only
+     * the redirect `max` is set: redirectLimit() reads it back, and Guzzle's
+     * own default of 5 would cap a larger `max_redirects`.
      */
     protected function makeClient(): Client
     {
         return new Client([
             'http_errors' => false,
+            'allow_redirects' => ['max' => $this->config['max_redirects']],
             'headers' => [
                 'User-Agent' => $this->config['user_agent'],
             ],

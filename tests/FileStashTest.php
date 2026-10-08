@@ -3013,6 +3013,28 @@ class FileStashTest extends TestCase
         ];
     }
 
+    #[DataProvider('provideRedirectLimitsOfTheDefaultClient')]
+    public function testDefaultClientFollowsUpToMaxRedirects(int $maxRedirects)
+    {
+        $cache = new FileStash(['path' => $this->cachePath, 'max_redirects' => $maxRedirects]);
+        $fetcher = (new \ReflectionProperty($cache, 'remoteFetcher'))->getValue($cache);
+
+        // As a request does: the client is built before its options are.
+        (new ReflectionMethod($fetcher, 'client'))->invoke($fetcher);
+        $options = (new ReflectionMethod($fetcher, 'requestOptions'))->invoke($fetcher);
+
+        $this->assertSame($maxRedirects, $options['allow_redirects']['max']);
+    }
+
+    public static function provideRedirectLimitsOfTheDefaultClient(): array
+    {
+        return [
+            'none' => [0],
+            'below the Guzzle default' => [3],
+            'above the Guzzle default' => [8],
+        ];
+    }
+
     public function testInjectedClientWithALowerMaxStopsAtItsOwnLimit()
     {
         $url = 'https://files/image.jpg';

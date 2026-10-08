@@ -2,6 +2,17 @@
 
 All notable changes to this package are documented in this file.
 
+## v5.0.3 — 2026-10-08
+
+### Fixed
+
+- `max_redirects` above 5 works again without an injected client. In
+  v5.0.2 the package's own client carried Guzzle's default redirect `max`
+  of 5, and the lower of the two limits applied to it as well, so a larger
+  `max_redirects` was cut to 5. The client the package builds now takes its
+  `max` from `max_redirects`. An injected client is limited as described
+  for v5.0.2.
+
 ## v5.0.2 — 2026-10-08
 
 ### Security
