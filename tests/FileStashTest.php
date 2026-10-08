@@ -2965,6 +2965,7 @@ class FileStashTest extends TestCase
             'max 0' => [['max' => 0]],
             'max null' => [['max' => null]],
             'max 0 with other settings' => [['max' => 0, 'strict' => true]],
+            'a negative max' => [['max' => -1]],
         ];
     }
 
@@ -3005,6 +3006,8 @@ class FileStashTest extends TestCase
             // No limit to Guzzle; never "no redirects", and never no limit here.
             'max INF' => [['allow_redirects' => ['max' => INF]], 3, 3],
             'max NAN' => [['allow_redirects' => ['max' => NAN]], 3, 3],
+            'a max beyond an integer' => [['allow_redirects' => ['max' => 1e30]], 3, 3],
+            'a float max' => [['allow_redirects' => ['max' => 2.0]], 3, 2],
             'a max that is not a number' => [['allow_redirects' => ['max' => 'abc']], 3, 3],
         ];
     }

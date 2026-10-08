@@ -7,6 +7,7 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\TooManyRedirectsException;
+use GuzzleHttp\Handler\MockHandler;
 use Jackardios\FileStash\Contracts\File;
 use Jackardios\FileStash\Exceptions\FailedToRetrieveFileException;
 use Jackardios\FileStash\Exceptions\FileIsTooLargeException;
@@ -141,41 +142,44 @@ class RemoteFetcher
         $this->executeWithRetries($file, 'GET', function () use ($file, $target, $maxBytes): void {
             $sink = new SizeLimitedStream($target, $maxBytes);
 
+            // No ResponseInterface type on purpose: MockHandler passes
+            // queued exceptions through on_headers as well. A variable, so
+            // that static analysis does not take the type from the option.
+            $onHeaders = static function ($response) use ($sink, $maxBytes): void {
+                if (! $response instanceof ResponseInterface) {
+                    return;
+                }
+
+                $statusCode = $response->getStatusCode();
+                if ($statusCode >= 400) {
+                    // Abort before the error body is downloaded into the target.
+                    throw FailedToRetrieveFileException::create(
+                        "HTTP request failed with status code {$statusCode}",
+                        statusCode: $statusCode
+                    );
+                }
+
+                // Guzzle reuses the sink across redirect hops: discard
+                // redirect-hop bodies entirely (they must neither end
+                // up in the file nor count against the size limit).
+                $isRedirect = $statusCode >= 300;
+                $sink->reset(discardBody: $isRedirect);
+
+                if ($isRedirect) {
+                    return;
+                }
+
+                $contentLength = $response->getHeaderLine('content-length');
+                if ($maxBytes >= 0 && is_numeric($contentLength) && (int) $contentLength > $maxBytes) {
+                    throw FileIsTooLargeException::create($maxBytes);
+                }
+            };
+
             try {
                 $response = $this->client()->get(Url::encode($file->getUrl()), [
                     ...$this->requestOptions(),
                     'sink' => $sink,
-                    // No ResponseInterface type on purpose: MockHandler passes
-                    // queued exceptions through on_headers as well.
-                    'on_headers' => static function ($response) use ($sink, $maxBytes): void {
-                        if (! $response instanceof ResponseInterface) {
-                            return;
-                        }
-
-                        $statusCode = $response->getStatusCode();
-                        if ($statusCode >= 400) {
-                            // Abort before the error body is downloaded into the target.
-                            throw FailedToRetrieveFileException::create(
-                                "HTTP request failed with status code {$statusCode}",
-                                statusCode: $statusCode
-                            );
-                        }
-
-                        // Guzzle reuses the sink across redirect hops: discard
-                        // redirect-hop bodies entirely (they must neither end
-                        // up in the file nor count against the size limit).
-                        $isRedirect = $statusCode >= 300;
-                        $sink->reset(discardBody: $isRedirect);
-
-                        if ($isRedirect) {
-                            return;
-                        }
-
-                        $contentLength = $response->getHeaderLine('content-length');
-                        if ($maxBytes >= 0 && is_numeric($contentLength) && (int) $contentLength > $maxBytes) {
-                            throw FileIsTooLargeException::create($maxBytes);
-                        }
-                    },
+                    'on_headers' => $onHeaders,
                 ]);
             } catch (GuzzleException $exception) {
                 if ($sink->limitExceeded()) {
@@ -458,20 +462,25 @@ class RemoteFetcher
         if (
             ! is_array($redirects)
             || ! array_key_exists('max', $redirects)
-            || $redirects === (new Client(['handler' => static fn () => null]))->getConfig('allow_redirects')
+            || $redirects === (new Client(['handler' => new MockHandler]))->getConfig('allow_redirects')
         ) {
             return $limit;
         }
 
-        if (empty($redirects['max'])) {
+        $max = $redirects['max'];
+
+        // Only an empty `max` turns redirects off; any other value that is
+        // not a number means "no limit" to Guzzle, so the config is the limit.
+        if (! is_numeric($max)) {
+            return empty($max) ? 0 : $limit;
+        }
+
+        if ($max <= 0) {
             return 0;
         }
 
-        // A `max` that is not a number, or not one an integer holds (INF,
-        // NAN), means "no limit" to Guzzle: the config is the limit.
-        $max = $redirects['max'];
-
-        return is_numeric($max) && ! is_nan((float) $max) ? (int) min((float) $max, (float) $limit) : $limit;
+        // Compared, not cast: INF, NAN and floats beyond an integer are numbers too.
+        return $max < $limit ? (int) $max : $limit;
     }
 
     /**
